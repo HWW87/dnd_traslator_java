@@ -1,0 +1,12 @@
+{
+  "exists": true,
+  "pages": 1,
+  "chars": 3745,
+  "question_marks": 3,
+  "contains_cool_char": false,
+  "english_hits": 0,
+  "sample_lines_with_question_mark": [
+    "7\u00ba emboscada swashbuckling ?dvcntuRcsTM cl5ool",
+    "- No se puede hacer m\u00e1s da\u00f1o.?- Combinaci\u00f3n peligrosa, la m\u00e1s peligrosa.?- 3HF1--;--,-,-"
+  ]
+}
