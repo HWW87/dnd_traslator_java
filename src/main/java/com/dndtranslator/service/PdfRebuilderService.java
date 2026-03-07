@@ -157,13 +157,25 @@ public class PdfRebuilderService {
         }
 
         float gutter = 24f;
-        float totalUsableWidth = pageWidth - (margin * 2f) - gutter;
-        float columnWidth = totalUsableWidth / 2f;
-        float splitX = margin + columnWidth + (gutter / 2f);
+        float splitX = Float.isNaN(meta.getSplitX()) ? (pageWidth / 2f) : meta.getSplitX();
+
+        float leftStart = margin;
+        float leftEnd = splitX - (gutter / 2f);
+        float rightStart = splitX + (gutter / 2f);
+        float rightEnd = pageWidth - margin;
+
+        // Fallback defensivo si el split/gutter deja columnas invalidas.
+        if (leftEnd <= leftStart + 20f || rightEnd <= rightStart + 20f) {
+            float totalUsableWidth = pageWidth - (margin * 2f) - gutter;
+            float columnWidth = totalUsableWidth / 2f;
+            leftEnd = margin + columnWidth;
+            rightStart = leftEnd + gutter;
+        }
 
         boolean leftColumn = x < splitX;
-        float columnStart = leftColumn ? margin : (margin + columnWidth + gutter);
-        float columnEnd = columnStart + columnWidth;
+        float columnStart = leftColumn ? leftStart : rightStart;
+        float columnEnd = leftColumn ? leftEnd : rightEnd;
+
         float clampedX = Math.max(columnStart, Math.min(x, columnEnd - 10f));
         return Math.max(60f, columnEnd - clampedX);
     }

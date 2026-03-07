@@ -206,7 +206,10 @@ public class PdfToParagraphService {
             return;
         }
         candidates.add(path);
-        if (!path.getFileName().toString().equalsIgnoreCase("tessdata")) {
+
+        Path fileName = path.getFileName();
+        boolean isTessdataDir = fileName != null && fileName.toString().equalsIgnoreCase("tessdata");
+        if (!isTessdataDir) {
             candidates.add(path.resolve("tessdata"));
         }
     }

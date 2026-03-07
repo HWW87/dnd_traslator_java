@@ -35,6 +35,8 @@ public class TranslatorUI extends Application {
     private final AtomicBoolean paused = new AtomicBoolean(false);
     private final AtomicBoolean stopped = new AtomicBoolean(false);
 
+    private volatile Task<Void> currentTask;
+
     private static final int MIN_TEXT_CHARS_PER_PAGE = 140;
     private static final double MAX_NOISY_RATIO_FOR_EMBEDDED = 0.28d;
     private static final double MAX_SUSPICIOUS_RATIO_FOR_EMBEDDED = 0.035d;
@@ -80,7 +82,13 @@ public class TranslatorUI extends Application {
             stopped.set(true);
             paused.set(false);
             pauseButton.setText("⏸️ Pausar");
-            log("🛑 Detención solicitada. Esperando cierre seguro...");
+
+            Task<Void> task = currentTask;
+            if (task != null) {
+                task.cancel(true);
+            }
+
+            log("🛑 Detencion solicitada. Esperando cierre seguro...");
         });
 
         exitButton.setOnAction(e -> {
@@ -153,7 +161,7 @@ public class TranslatorUI extends Application {
 
                     try {
                         while (completed < total) {
-                            if (stopped.get()) {
+                            if (isCancelled() || stopped.get() || Thread.currentThread().isInterrupted()) {
                                 log("⛔ Proceso detenido por el usuario.");
                                 return null;
                             }
@@ -185,7 +193,22 @@ public class TranslatorUI extends Application {
                                 continue;
                             }
 
-                            TranslationResult result = done.get();
+                            TranslationResult result;
+                            try {
+                                result = done.get();
+                            } catch (CancellationException e) {
+                                if (isCancelled() || stopped.get()) {
+                                    return null;
+                                }
+                                throw e;
+                            } catch (ExecutionException e) {
+                                Throwable cause = e.getCause();
+                                if (cause instanceof InterruptedException) {
+                                    Thread.currentThread().interrupt();
+                                    return null;
+                                }
+                                throw e;
+                            }
                             inFlight--;
                             completed++;
 
@@ -197,6 +220,11 @@ public class TranslatorUI extends Application {
                         translationPool.shutdownNow();
                     }
 
+                    if (isCancelled() || stopped.get() || Thread.currentThread().isInterrupted()) {
+                        log("⛔ Proceso cancelado antes de reconstruir el PDF.");
+                        return null;
+                    }
+
                     log("🧾 Reconstruyendo PDF con layout original...");
                     rebuilder.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
                     log("🎉 Traducción completa con maquetación preservada.");
@@ -204,6 +232,8 @@ public class TranslatorUI extends Application {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     log("⛔ Proceso interrumpido.");
+                } catch (CancellationException e) {
+                    log("⛔ Proceso cancelado.");
                 } catch (Exception e) {
                     log("❌ Error: " + e.getMessage());
                 }
@@ -211,11 +241,15 @@ public class TranslatorUI extends Application {
             }
         };
 
+        currentTask = task;
         progressBar.progressProperty().unbind();
         progressBar.progressProperty().bind(task.progressProperty());
         Thread worker = new Thread(task, "pdf-translation-worker");
         worker.setDaemon(true);
         worker.start();
+        task.setOnSucceeded(e -> currentTask = null);
+        task.setOnCancelled(e -> currentTask = null);
+        task.setOnFailed(e -> currentTask = null);
     }
 
     private record TranslationResult(int index, String text) {

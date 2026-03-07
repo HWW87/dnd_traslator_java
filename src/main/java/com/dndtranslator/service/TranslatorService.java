@@ -90,12 +90,21 @@ public class TranslatorService {
         StringBuilder translatedTotal = new StringBuilder();
 
         for (String segment : segments) {
+            if (Thread.currentThread().isInterrupted()) {
+                Thread.currentThread().interrupt();
+                break;
+            }
             String translatedSegment = translateSegment(segment, targetLanguage, model);
             translatedTotal.append(translatedSegment).append("\n");
+            if (Thread.currentThread().isInterrupted()) {
+                break;
+            }
         }
 
         String translatedFull = translatedTotal.toString().trim();
-        cacheTranslation(text, translatedFull);
+        if (!Thread.currentThread().isInterrupted()) {
+            cacheTranslation(text, translatedFull);
+        }
         return translatedFull;
     }
 
@@ -154,8 +163,11 @@ public class TranslatorService {
                     return cleanTranslation(translated);
                 }
 
-            } catch (IOException | InterruptedException e) {
-                System.err.println("⚠️ Intento " + attempt + " falló: " + e.getMessage());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return "";
+            } catch (IOException e) {
+                System.err.println("⚠️ Intento " + attempt + " fallo: " + e.getMessage());
             }
         }
         return "[Error: segmento no traducido]";
