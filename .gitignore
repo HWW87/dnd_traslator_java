@@ -1,0 +1,10 @@
+# Build artifacts
+/target/
+
+# Local runtime data
+/translations.db
+
+# IDE local files
+/.idea/workspace.xml
+/.idea/shelf/
+
