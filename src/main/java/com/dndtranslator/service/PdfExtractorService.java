@@ -145,14 +145,15 @@ public class PdfExtractorService extends PDFTextStripper {
         float minX = sorted.get(0);
         float maxX = sorted.get(sorted.size() - 1);
         float spread = maxX - minX;
-        if (spread < pageWidth * 0.35f) {
+        if (spread < pageWidth * 0.32f) {
             return new ColumnLayout(1, Float.NaN);
         }
 
+        // 1) Heuristica principal: buscar valle central entre clusters de X.
         float bestGap = 0f;
         float splitX = Float.NaN;
-        float midMin = minX + spread * 0.25f;
-        float midMax = minX + spread * 0.75f;
+        float midMin = minX + spread * 0.15f;
+        float midMax = minX + spread * 0.85f;
 
         for (int i = 1; i < sorted.size(); i++) {
             float left = sorted.get(i - 1);
@@ -169,20 +170,36 @@ public class PdfExtractorService extends PDFTextStripper {
             }
         }
 
-        if (Float.isNaN(splitX) || bestGap < pageWidth * 0.06f) {
+        if (!Float.isNaN(splitX)) {
+            final float detectedSplitX = splitX;
+            long leftCount = sorted.stream().filter(x -> x < detectedSplitX).count();
+            long rightCount = sorted.size() - leftCount;
+            int minPerSide = Math.max(3, sorted.size() / 8);
+
+            if (bestGap >= pageWidth * 0.03f && leftCount >= minPerSide && rightCount >= minPerSide) {
+                return new ColumnLayout(2, detectedSplitX);
+            }
+        }
+
+        // 2) Fallback robusto: separacion de centroides (mejor para distribuciones 64/36).
+        float splitByMedian = sorted.get(sorted.size() / 2);
+        long left = sorted.stream().filter(x -> x < splitByMedian).count();
+        long right = sorted.size() - left;
+
+        int minPerSide = Math.max(3, sorted.size() / 6);
+        if (left < minPerSide || right < minPerSide) {
             return new ColumnLayout(1, Float.NaN);
         }
 
-        final float detectedSplitX = splitX;
-        long leftCount = sorted.stream().filter(x -> x < detectedSplitX).count();
-        long rightCount = sorted.size() - leftCount;
-        int minPerSide = Math.max(3, sorted.size() / 5);
+        double leftAvg = sorted.stream().filter(x -> x < splitByMedian).mapToDouble(Float::doubleValue).average().orElse(minX);
+        double rightAvg = sorted.stream().filter(x -> x >= splitByMedian).mapToDouble(Float::doubleValue).average().orElse(maxX);
+        double centroidSeparation = rightAvg - leftAvg;
 
-        if (leftCount < minPerSide || rightCount < minPerSide) {
+        if (centroidSeparation < pageWidth * 0.20f) {
             return new ColumnLayout(1, Float.NaN);
         }
 
-        return new ColumnLayout(2, detectedSplitX);
+        return new ColumnLayout(2, splitByMedian);
     }
 
     private int detectColumnFromX(float x, float pageWidth, int columns, float splitX) {

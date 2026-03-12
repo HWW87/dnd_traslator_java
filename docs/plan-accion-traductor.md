@@ -85,6 +85,17 @@ Restaurar el flujo end-to-end para que la aplicacion pueda:
   - OCR paralelo por pagina (despues del render de imagen) para usar todos los nucleos.
   - Se permite override con variable de entorno `DND_OCR_THREADS`.
 
+### 8) OCR con layout real para doble columna (implementado)
+- `src/main/java/com/dndtranslator/service/PdfToParagraphService.java`:
+  - Ahora expone `getLayoutInfo()` con `PageMeta` por pagina tambien en modo OCR.
+  - Escala coordenadas OCR de pixeles a unidades PDF (72 DPI), mejorando consistencia de posicion y ancho de columna.
+  - Usa una heuristica robusta de deteccion de columnas (valle central + separacion de centroides), alineada con el extractor de texto embebido.
+  - Ordena OCR por `pagina -> columna -> y -> x` usando split por pagina persistido en `layoutInfo`.
+- `src/main/java/com/dndtranslator/TranslatorUI.java`:
+  - Cuando entra OCR fallback, ahora sustituye tambien `layoutInfo` por el del OCR, evitando reconstruccion como pagina de 1 sola columna por defecto.
+- `src/main/java/com/dndtranslator/tools/ExtractionDiagnostics.java`:
+  - En fallback OCR, toma metadatos de columnas OCR para que `crossColumnJumps` y `columns=` reflejen la realidad.
+
 ## Resultado esperado
 - Para PDFs con texto embebido: extrae, traduce y reconstruye el PDF.
 - Para PDFs escaneados: intenta OCR y luego traduce/reconstruye.

@@ -37,11 +37,14 @@ public class ExtractionDiagnostics {
             usedOcrFallback = true;
             PdfToParagraphService ocr = new PdfToParagraphService();
             paragraphs = ocr.extractParagraphsFromPdf(pdfFile);
+            layoutInfo = ocr.getLayoutInfo();
         }
+
+        final Map<Integer, PageMeta> finalLayoutInfo = layoutInfo;
 
         paragraphs.sort(Comparator
                 .comparingInt(Paragraph::getPage)
-                .thenComparingInt(p -> columnIndexForParagraph(p, layoutInfo))
+                .thenComparingInt(p -> columnIndexForParagraph(p, finalLayoutInfo))
                 .thenComparing(Paragraph::getY)
                 .thenComparing(Paragraph::getX));
 
@@ -51,7 +54,7 @@ public class ExtractionDiagnostics {
                 layoutInfo.keySet().stream().mapToInt(Integer::intValue).max().orElse(0)
         );
 
-        int crossColumnJumps = computeCrossColumnJumps(paragraphs, layoutInfo);
+        int crossColumnJumps = computeCrossColumnJumps(paragraphs, finalLayoutInfo);
         double noisyRatio = computeNoisyRatio(paragraphs);
         double suspiciousRatio = computeSuspiciousRatio(paragraphs);
 
@@ -64,8 +67,8 @@ public class ExtractionDiagnostics {
         System.out.println("noisyRatio=" + String.format("%.3f", noisyRatio));
         System.out.println("suspiciousRatio=" + String.format("%.3f", suspiciousRatio));
 
-        if (!layoutInfo.isEmpty()) {
-            String perPageColumns = layoutInfo.entrySet().stream()
+        if (!finalLayoutInfo.isEmpty()) {
+            String perPageColumns = finalLayoutInfo.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey())
                     .map(e -> {
                         PageMeta meta = e.getValue();
@@ -76,7 +79,7 @@ public class ExtractionDiagnostics {
             System.out.println("columns=" + perPageColumns);
         }
 
-        String pageSpread = buildPageSpread(paragraphs, layoutInfo);
+        String pageSpread = buildPageSpread(paragraphs, finalLayoutInfo);
         if (!pageSpread.isBlank()) {
             System.out.println("pageSpread=" + pageSpread);
         }

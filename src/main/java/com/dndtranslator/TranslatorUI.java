@@ -139,6 +139,7 @@ public class TranslatorUI extends Application {
                         }
                         PdfToParagraphService ocrExtractor = new PdfToParagraphService();
                         paragraphs = ocrExtractor.extractParagraphsFromPdf(pdfFile);
+                        layoutInfo = ocrExtractor.getLayoutInfo();
                     }
 
                     int total = paragraphs.size();

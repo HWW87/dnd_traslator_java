@@ -1,5 +1,6 @@
 package com.dndtranslator.service;
 
+import com.dndtranslator.model.PageMeta;
 import com.dndtranslator.model.Paragraph;
 import net.sourceforge.tess4j.ITessAPI;
 import net.sourceforge.tess4j.ITesseract;
@@ -32,9 +33,17 @@ import java.util.concurrent.Future;
 public class PdfToParagraphService {
 
     private static final int OCR_DPI = 300;
+    private static final float OCR_TO_PDF_UNITS = 72f / OCR_DPI;
+
+    private final Map<Integer, PageMeta> layoutInfo = new HashMap<>();
+
+    public Map<Integer, PageMeta> getLayoutInfo() {
+        return layoutInfo;
+    }
 
     public List<Paragraph> extractParagraphsFromPdf(File pdf) throws Exception {
         List<Paragraph> result = new ArrayList<>();
+        layoutInfo.clear();
 
         List<PageImageRef> renderedPages = new ArrayList<>();
         try (PDDocument document = PDDocument.load(pdf)) {
@@ -43,21 +52,25 @@ public class PdfToParagraphService {
             // Render secuencial: PDFRenderer comparte estado interno del documento.
             for (int pageIndex = 0; pageIndex < document.getNumberOfPages(); pageIndex++) {
                 BufferedImage image = renderer.renderImageWithDPI(pageIndex, OCR_DPI);
-                renderedPages.add(new PageImageRef(pageIndex, image));
+                float width = image.getWidth() * OCR_TO_PDF_UNITS;
+                float height = image.getHeight() * OCR_TO_PDF_UNITS;
+                renderedPages.add(new PageImageRef(pageIndex, image, width, height));
             }
         }
 
         int ocrThreads = resolveOcrThreads();
         ExecutorService ocrPool = Executors.newFixedThreadPool(ocrThreads);
-        List<Future<List<Paragraph>>> futures = new ArrayList<>();
+        List<Future<PageOcrResult>> futures = new ArrayList<>();
 
         try {
             for (PageImageRef page : renderedPages) {
-                futures.add(ocrPool.submit(() -> extractParagraphsFromImage(page.pageIndex(), page.image())));
+                futures.add(ocrPool.submit(() -> extractParagraphsFromImage(page)));
             }
 
-            for (Future<List<Paragraph>> future : futures) {
-                result.addAll(future.get());
+            for (Future<PageOcrResult> future : futures) {
+                PageOcrResult pageResult = future.get();
+                layoutInfo.put(pageResult.pageNumber(), pageResult.meta());
+                result.addAll(pageResult.paragraphs());
             }
         } catch (ExecutionException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
@@ -66,33 +79,43 @@ public class PdfToParagraphService {
             ocrPool.shutdownNow();
         }
 
-        Map<Integer, Float> splitByPage = estimateSplitByPage(result);
         result.sort(Comparator
                 .comparingInt(Paragraph::getPage)
-                .thenComparingInt(p -> columnIndex(p, splitByPage.getOrDefault(p.getPage(), Float.NaN)))
+                .thenComparingInt(this::columnIndexForParagraph)
                 .thenComparing(Paragraph::getY)
                 .thenComparing(Paragraph::getX));
 
         return result;
     }
 
-    private List<Paragraph> extractParagraphsFromImage(int pageIndexZeroBased, BufferedImage image) throws IOException, TesseractException {
+    private PageOcrResult extractParagraphsFromImage(PageImageRef page) throws IOException, TesseractException {
         ITesseract tesseract = createTesseract();
+        int pageNumber = page.pageIndex() + 1;
 
-        List<Paragraph> primary = extractLineParagraphs(tesseract, image, pageIndexZeroBased + 1);
-        BufferedImage preprocessed = preprocessForOcr(image);
-        List<Paragraph> enhanced = extractLineParagraphs(tesseract, preprocessed, pageIndexZeroBased + 1);
+        List<Paragraph> primary = extractLineParagraphs(tesseract, page.image(), pageNumber);
+        BufferedImage preprocessed = preprocessForOcr(page.image());
+        List<Paragraph> enhanced = extractLineParagraphs(tesseract, preprocessed, pageNumber);
 
         List<Paragraph> selected = scoreParagraphs(enhanced) >= scoreParagraphs(primary) ? enhanced : primary;
+        ColumnLayout layout = detectColumnLayout(page.pageWidth(), xPositions(selected));
 
-        final float splitX = estimateColumnSplitX(selected);
         selected.sort(Comparator
                 .comparing(Paragraph::getPage)
-                .thenComparingInt(p -> columnIndex(p, splitX))
+                .thenComparingInt(p -> columnIndex(p, layout.columns(), layout.splitX(), page.pageWidth()))
                 .thenComparing(Paragraph::getY)
                 .thenComparing(Paragraph::getX));
 
-        return selected;
+        PageMeta meta = new PageMeta(
+                page.pageWidth(),
+                page.pageHeight(),
+                50f,
+                50f,
+                layout.columns(),
+                "OCR",
+                averageFontSize(selected),
+                layout.splitX()
+        );
+        return new PageOcrResult(pageNumber, selected, meta);
     }
 
     private List<Paragraph> extractLineParagraphs(ITesseract tesseract, BufferedImage image, int pageNumber) throws TesseractException {
@@ -106,9 +129,9 @@ public class PdfToParagraphService {
             }
 
             Rectangle bbox = line.getBoundingBox();
-            float x = bbox != null ? bbox.x : 0;
-            float y = bbox != null ? bbox.y : 0;
-            float fontSize = bbox != null ? Math.max(8f, bbox.height * 0.7f) : 10f;
+            float x = bbox != null ? bbox.x * OCR_TO_PDF_UNITS : 0f;
+            float y = bbox != null ? bbox.y * OCR_TO_PDF_UNITS : 0f;
+            float fontSize = bbox != null ? Math.max(8f, (bbox.height * OCR_TO_PDF_UNITS) * 0.7f) : 10f;
 
             blocks.add(new Paragraph(text, pageNumber, x, y, "OCR", fontSize));
         }
@@ -231,51 +254,93 @@ public class PdfToParagraphService {
         return lang.trim().toLowerCase(Locale.ROOT);
     }
 
-    private float estimateColumnSplitX(List<Paragraph> blocks) {
-        if (blocks.isEmpty()) {
-            return Float.NaN;
-        }
-
-        float minX = Float.MAX_VALUE;
-        float maxX = Float.MIN_VALUE;
-        for (Paragraph p : blocks) {
-            minX = Math.min(minX, p.getX());
-            maxX = Math.max(maxX, p.getX());
-        }
-
-        if ((maxX - minX) < 260f) {
-            return Float.NaN;
-        }
-
-        float splitX = (minX + maxX) / 2f;
-        long left = blocks.stream().filter(p -> p.getX() < splitX).count();
-        long right = blocks.size() - left;
-
-        if (left < Math.max(2, blocks.size() / 5) || right < Math.max(2, blocks.size() / 5)) {
-            return Float.NaN;
-        }
-
-        return splitX;
-    }
-
-    private Map<Integer, Float> estimateSplitByPage(List<Paragraph> paragraphs) {
-        Map<Integer, List<Paragraph>> byPage = new HashMap<>();
-        for (Paragraph p : paragraphs) {
-            byPage.computeIfAbsent(p.getPage(), ignored -> new ArrayList<>()).add(p);
-        }
-
-        Map<Integer, Float> splitByPage = new HashMap<>();
-        for (Map.Entry<Integer, List<Paragraph>> entry : byPage.entrySet()) {
-            splitByPage.put(entry.getKey(), estimateColumnSplitX(entry.getValue()));
-        }
-        return splitByPage;
-    }
-
-    private int columnIndex(Paragraph p, float splitX) {
-        if (Float.isNaN(splitX)) {
+    private int columnIndexForParagraph(Paragraph p) {
+        PageMeta meta = layoutInfo.get(p.getPage());
+        if (meta == null) {
             return 0;
         }
-        return p.getX() < splitX ? 0 : 1;
+        return columnIndex(p, meta.getColumnCount(), meta.getSplitX(), meta.getWidth());
+    }
+
+    private int columnIndex(Paragraph p, int columns, float splitX, float pageWidth) {
+        if (columns < 2) {
+            return 0;
+        }
+        if (!Float.isNaN(splitX)) {
+            return p.getX() < splitX ? 0 : 1;
+        }
+        return p.getX() < (pageWidth / 2f) ? 0 : 1;
+    }
+
+    private float averageFontSize(List<Paragraph> paragraphs) {
+        return (float) paragraphs.stream().mapToDouble(Paragraph::getFontSize).average().orElse(11d);
+    }
+
+    private List<Float> xPositions(List<Paragraph> paragraphs) {
+        return paragraphs.stream().map(Paragraph::getX).sorted().toList();
+    }
+
+    private ColumnLayout detectColumnLayout(float pageWidth, List<Float> xPositions) {
+        if (xPositions == null || xPositions.size() < 10) {
+            return new ColumnLayout(1, Float.NaN);
+        }
+
+        float minX = xPositions.get(0);
+        float maxX = xPositions.get(xPositions.size() - 1);
+        float spread = maxX - minX;
+        if (spread < pageWidth * 0.32f) {
+            return new ColumnLayout(1, Float.NaN);
+        }
+
+        float bestGap = 0f;
+        float splitX = Float.NaN;
+        float midMin = minX + spread * 0.15f;
+        float midMax = minX + spread * 0.85f;
+
+        for (int i = 1; i < xPositions.size(); i++) {
+            float left = xPositions.get(i - 1);
+            float right = xPositions.get(i);
+            float gap = right - left;
+            float candidateSplit = (left + right) / 2f;
+
+            if (candidateSplit < midMin || candidateSplit > midMax) {
+                continue;
+            }
+            if (gap > bestGap) {
+                bestGap = gap;
+                splitX = candidateSplit;
+            }
+        }
+
+        if (!Float.isNaN(splitX)) {
+            final float detectedSplitX = splitX;
+            long leftCount = xPositions.stream().filter(x -> x < detectedSplitX).count();
+            long rightCount = xPositions.size() - leftCount;
+            int minPerSide = Math.max(3, xPositions.size() / 8);
+
+            if (bestGap >= pageWidth * 0.03f && leftCount >= minPerSide && rightCount >= minPerSide) {
+                return new ColumnLayout(2, detectedSplitX);
+            }
+        }
+
+        float splitByMedian = xPositions.get(xPositions.size() / 2);
+        long left = xPositions.stream().filter(x -> x < splitByMedian).count();
+        long right = xPositions.size() - left;
+
+        int minPerSide = Math.max(3, xPositions.size() / 6);
+        if (left < minPerSide || right < minPerSide) {
+            return new ColumnLayout(1, Float.NaN);
+        }
+
+        double leftAvg = xPositions.stream().filter(x -> x < splitByMedian).mapToDouble(Float::doubleValue).average().orElse(minX);
+        double rightAvg = xPositions.stream().filter(x -> x >= splitByMedian).mapToDouble(Float::doubleValue).average().orElse(maxX);
+        double centroidSeparation = rightAvg - leftAvg;
+
+        if (centroidSeparation < pageWidth * 0.20f) {
+            return new ColumnLayout(1, Float.NaN);
+        }
+
+        return new ColumnLayout(2, splitByMedian);
     }
 
     private int resolveOcrThreads() {
@@ -296,6 +361,12 @@ public class PdfToParagraphService {
         return Optional.ofNullable(s).orElse("").replaceAll("\\s+", " ").trim();
     }
 
-    private record PageImageRef(int pageIndex, BufferedImage image) {
+    private record PageImageRef(int pageIndex, BufferedImage image, float pageWidth, float pageHeight) {
+    }
+
+    private record PageOcrResult(int pageNumber, List<Paragraph> paragraphs, PageMeta meta) {
+    }
+
+    private record ColumnLayout(int columns, float splitX) {
     }
 }
