@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CopilotDiffPersistence">
+    <option name="pendingDiffs">
+      <map>
+        <entry key="$PROJECT_DIR$/src/main/java/com/dndtranslator/service/workflow/TranslationEventListener.java">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/src/main/java/com/dndtranslator/service/workflow/TranslationEventListener.java" />
+              <option name="originalContent" value="package com.dndtranslator.service.workflow;&#10;&#10;public interface TranslationEventListener {&#10;&#10;    void onLog(String message);&#10;&#10;    default void onProgress(int completed, int total) {&#10;        onProgress(new TranslationProgress(completed, total));&#10;    }&#10;&#10;    default void onProgress(TranslationProgress progress) {&#10;    }&#10;&#10;    default boolean isPaused() {&#10;        return false;&#10;    }&#10;&#10;    default boolean isStopped() {&#10;        return false;&#10;    }&#10;}&#10;&#10;" />
+              <option name="updatedContent" value="package com.dndtranslator.service.workflow;&#10;&#10;public interface TranslationEventListener {&#10;&#10;    void onLog(String message);&#10;&#10;    default void onProgress(int completed, int total) {&#10;    }&#10;&#10;    default void onProgress(TranslationProgress progress) {&#10;        onProgress(progress.completed(), progress.total());&#10;    }&#10;&#10;    default boolean isPaused() {&#10;        return false;&#10;    }&#10;&#10;    default boolean isStopped() {&#10;        return false;&#10;    }&#10;}" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

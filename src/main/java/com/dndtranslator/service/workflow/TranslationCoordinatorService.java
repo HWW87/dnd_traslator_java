@@ -11,18 +11,13 @@ import java.io.File;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
-import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorCompletionService;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
 public class TranslationCoordinatorService {
 
-    private final ExtractionQualityEvaluator extractionQualityEvaluator;
+    private final OcrDecisionPort ocrDecisionPort;
     private final TextSanitizer textSanitizer;
+    private final ParagraphTranslationExecutor paragraphTranslationExecutor;
     private final TranslatorGateway translatorGateway;
     private final PdfRebuilderGateway pdfRebuilderGateway;
     private final EmbeddedExtractor embeddedExtractor;
@@ -30,18 +25,20 @@ public class TranslationCoordinatorService {
     private final Runnable shutdownHook;
 
     public TranslationCoordinatorService() {
-        this(new TranslatorService(), new PdfRebuilderService(), new ExtractionQualityEvaluator(), new TextSanitizer());
+        this(new TranslatorService(), new PdfRebuilderService(), new OcrDecisionService(), new TextSanitizer(), new ParagraphTranslationExecutor());
     }
 
     public TranslationCoordinatorService(
             TranslatorService translatorService,
             PdfRebuilderService pdfRebuilderService,
-            ExtractionQualityEvaluator extractionQualityEvaluator,
-            TextSanitizer textSanitizer
+            OcrDecisionService ocrDecisionService,
+            TextSanitizer textSanitizer,
+            ParagraphTranslationExecutor paragraphTranslationExecutor
     ) {
         this(
-                extractionQualityEvaluator,
+                ocrDecisionService::shouldUseOcrFallback,
                 textSanitizer,
+                paragraphTranslationExecutor,
                 translatorService::translate,
                 pdfRebuilderService::rebuild,
                 pdfPath -> {
@@ -67,8 +64,31 @@ public class TranslationCoordinatorService {
             OcrExtractor ocrExtractor,
             Runnable shutdownHook
     ) {
-        this.extractionQualityEvaluator = extractionQualityEvaluator;
+        this(
+                extractionQualityEvaluator::shouldUseOcrFallback,
+                textSanitizer,
+                new ParagraphTranslationExecutor(),
+                translatorGateway,
+                pdfRebuilderGateway,
+                embeddedExtractor,
+                ocrExtractor,
+                shutdownHook
+        );
+    }
+
+    public TranslationCoordinatorService(
+            OcrDecisionPort ocrDecisionPort,
+            TextSanitizer textSanitizer,
+            ParagraphTranslationExecutor paragraphTranslationExecutor,
+            TranslatorGateway translatorGateway,
+            PdfRebuilderGateway pdfRebuilderGateway,
+            EmbeddedExtractor embeddedExtractor,
+            OcrExtractor ocrExtractor,
+            Runnable shutdownHook
+    ) {
+        this.ocrDecisionPort = ocrDecisionPort;
         this.textSanitizer = textSanitizer;
+        this.paragraphTranslationExecutor = paragraphTranslationExecutor;
         this.translatorGateway = translatorGateway;
         this.pdfRebuilderGateway = pdfRebuilderGateway;
         this.embeddedExtractor = embeddedExtractor;
@@ -76,7 +96,7 @@ public class TranslationCoordinatorService {
         this.shutdownHook = shutdownHook;
     }
 
-    public TranslationResult execute(TranslationRequest request, TranslationProgressListener listener) throws Exception {
+    public TranslationResult execute(TranslationRequest request, TranslationEventListener listener) throws Exception {
         validateRequest(request);
 
         File pdfFile = request.pdfFile();
@@ -86,23 +106,9 @@ public class TranslationCoordinatorService {
 
         listener.onLog("📐 Analizando maquetación y extrayendo texto...");
 
-        ExtractionSnapshot embedded = embeddedExtractor.extract(pdfFile.getAbsolutePath());
-        List<Paragraph> paragraphs = embedded.paragraphs();
-        Map<Integer, PageMeta> layoutInfo = embedded.layoutInfo();
-
-        boolean poorEmbeddedQuality = extractionQualityEvaluator.shouldUseOcrFallback(paragraphs, layoutInfo);
-        boolean usedOcrFallback = paragraphs.isEmpty() || poorEmbeddedQuality;
-
-        if (usedOcrFallback) {
-            if (paragraphs.isEmpty()) {
-                listener.onLog("🧠 No se detecto texto embebido. Activando OCR embebido...");
-            } else {
-                listener.onLog("🧠 Texto embebido detectado pero con calidad baja. Activando OCR embebido...");
-            }
-            ExtractionSnapshot ocr = ocrExtractor.extract(pdfFile);
-            paragraphs = ocr.paragraphs();
-            layoutInfo = ocr.layoutInfo();
-        }
+        ExtractionSnapshot extraction = resolveExtraction(pdfFile, listener);
+        List<Paragraph> paragraphs = extraction.paragraphs();
+        Map<Integer, PageMeta> layoutInfo = extraction.layoutInfo();
 
         int total = paragraphs.size();
         if (total == 0) {
@@ -119,69 +125,47 @@ public class TranslationCoordinatorService {
 
         String outputPath = buildOutputPath(pdfFile.getAbsolutePath());
         listener.onLog("🎉 Traducción completa con maquetación preservada.");
-        return new TranslationResult(outputPath, total, usedOcrFallback);
+        return new TranslationResult(outputPath, total, extraction.usedOcrFallback());
     }
 
-    private void translateParagraphs(List<Paragraph> paragraphs, String targetLanguage, TranslationProgressListener listener) throws InterruptedException, ExecutionException {
-        int workers = Math.max(1, Runtime.getRuntime().availableProcessors());
-        listener.onLog("⚙️ Traducción paralela habilitada con " + workers + " hilos.");
+    private ExtractionSnapshot resolveExtraction(File pdfFile, TranslationEventListener listener) throws Exception {
+        ExtractionSnapshot embedded = embeddedExtractor.extract(pdfFile.getAbsolutePath());
 
-        ExecutorService translationPool = Executors.newFixedThreadPool(workers);
-        CompletionService<ParagraphTranslationResult> completionService = new ExecutorCompletionService<>(translationPool);
+        List<Paragraph> paragraphs = embedded.paragraphs();
+        Map<Integer, PageMeta> layoutInfo = embedded.layoutInfo();
 
-        int total = paragraphs.size();
-        int submitted = 0;
-        int completed = 0;
-        int inFlight = 0;
+        boolean poorEmbeddedQuality = ocrDecisionPort.shouldUseOcrFallback(paragraphs, layoutInfo);
+        boolean usedOcrFallback = paragraphs.isEmpty() || poorEmbeddedQuality;
 
-        try {
-            while (completed < total) {
-                checkStopRequested(listener);
-                waitWhilePaused(listener);
-
-                while (!listener.isPaused() && submitted < total && inFlight < workers) {
-                    final int index = submitted;
-                    final Paragraph paragraph = paragraphs.get(index);
-                    completionService.submit(() -> {
-                        String sourceText = paragraph.getFullText();
-                        String sanitized = textSanitizer.sanitizeForTranslation(sourceText);
-                        String translated = translatorGateway.translate(sanitized, targetLanguage);
-                        return new ParagraphTranslationResult(index, translated);
-                    });
-                    submitted++;
-                    inFlight++;
-                }
-
-                if (listener.isPaused()) {
-                    continue;
-                }
-
-                Future<ParagraphTranslationResult> done = completionService.poll(300, TimeUnit.MILLISECONDS);
-                if (done == null) {
-                    continue;
-                }
-
-                ParagraphTranslationResult result = done.get();
-                inFlight--;
-                completed++;
-
-                paragraphs.get(result.index()).setTranslatedText(result.translatedText());
-                listener.onProgress(completed, total);
-                listener.onLog("✅ Traducido párrafo " + completed + "/" + total);
-            }
-        } finally {
-            translationPool.shutdownNow();
+        if (!usedOcrFallback) {
+            return new ExtractionSnapshot(paragraphs, layoutInfo, false);
         }
-    }
 
-    private void waitWhilePaused(TranslationProgressListener listener) throws InterruptedException {
-        while (listener.isPaused()) {
-            checkStopRequested(listener);
-            Thread.sleep(200);
+        if (paragraphs.isEmpty()) {
+            listener.onLog("🧠 No se detecto texto embebido. Activando OCR embebido...");
+        } else {
+            listener.onLog("🧠 Texto embebido detectado pero con calidad baja. Activando OCR embebido...");
         }
+
+        ExtractionSnapshot ocr = ocrExtractor.extract(pdfFile);
+        return new ExtractionSnapshot(ocr.paragraphs(), ocr.layoutInfo(), true);
     }
 
-    private void checkStopRequested(TranslationProgressListener listener) {
+    private void translateParagraphs(
+            List<Paragraph> paragraphs,
+            String targetLanguage,
+            TranslationEventListener listener
+    ) throws InterruptedException, ExecutionException {
+        paragraphTranslationExecutor.translate(
+                paragraphs,
+                targetLanguage,
+                textSanitizer,
+                translatorGateway,
+                listener
+        );
+    }
+
+    private void checkStopRequested(TranslationEventListener listener) {
         if (listener.isStopped() || Thread.currentThread().isInterrupted()) {
             throw new CancellationException("Proceso detenido por el usuario.");
         }
@@ -209,7 +193,10 @@ public class TranslationCoordinatorService {
         shutdownHook.run();
     }
 
-    public record ExtractionSnapshot(List<Paragraph> paragraphs, Map<Integer, PageMeta> layoutInfo) {
+    public record ExtractionSnapshot(List<Paragraph> paragraphs, Map<Integer, PageMeta> layoutInfo, boolean usedOcrFallback) {
+        public ExtractionSnapshot(List<Paragraph> paragraphs, Map<Integer, PageMeta> layoutInfo) {
+            this(paragraphs, layoutInfo, false);
+        }
     }
 
     @FunctionalInterface
@@ -232,7 +219,8 @@ public class TranslationCoordinatorService {
         ExtractionSnapshot extract(File pdfFile) throws Exception;
     }
 
-    private record ParagraphTranslationResult(int index, String translatedText) {
+    @FunctionalInterface
+    public interface OcrDecisionPort {
+        boolean shouldUseOcrFallback(List<Paragraph> paragraphs, Map<Integer, PageMeta> layoutInfo);
     }
 }
-

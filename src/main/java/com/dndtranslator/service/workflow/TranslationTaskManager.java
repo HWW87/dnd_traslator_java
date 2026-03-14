@@ -10,24 +10,26 @@ public class TranslationTaskManager {
     private final AtomicBoolean stopped = new AtomicBoolean(false);
     private volatile Task<TranslationResult> currentTask;
 
-    public Task<TranslationResult> start(TranslationRequest request,
-                                         TranslationCoordinatorService coordinator,
-                                         TranslationProgressListener listener) {
+    public Task<TranslationResult> start(
+            TranslationRequest request,
+            TranslationCoordinatorService coordinator,
+            TranslationEventListener listener
+    ) {
         resetControlFlags();
 
         Task<TranslationResult> task = new Task<>() {
             @Override
             protected TranslationResult call() throws Exception {
-                TranslationProgressListener managedListener = new TranslationProgressListener() {
+                TranslationEventListener managedListener = new TranslationEventListener() {
                     @Override
                     public void onLog(String message) {
                         listener.onLog(message);
                     }
 
                     @Override
-                    public void onProgress(int completed, int total) {
-                        updateProgress(completed, total);
-                        listener.onProgress(completed, total);
+                    public void onProgress(TranslationProgress progress) {
+                        updateProgress(progress.completed(), progress.total());
+                        listener.onProgress(progress);
                     }
 
                     @Override
@@ -80,4 +82,3 @@ public class TranslationTaskManager {
         return stopped.get();
     }
 }
-
