@@ -8,3 +8,7 @@
 /.idea/workspace.xml
 /.idea/shelf/
 
+# Temporary scripts and analysis files
+tmp_*.py
+tmp_*.json
+
