@@ -1,8 +1,10 @@
 package com.dndtranslator;
 
-import com.dndtranslator.model.PageMeta;
-import com.dndtranslator.model.Paragraph;
-import com.dndtranslator.service.*;
+import com.dndtranslator.service.workflow.TranslationCoordinatorService;
+import com.dndtranslator.service.workflow.TranslationProgressListener;
+import com.dndtranslator.service.workflow.TranslationRequest;
+import com.dndtranslator.service.workflow.TranslationResult;
+import com.dndtranslator.service.workflow.TranslationTaskManager;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
@@ -14,10 +16,7 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.File;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CancellationException;
 
 /**
  * 🎨 Interfaz JavaFX principal del traductor D&D.
@@ -25,22 +24,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class TranslatorUI extends Application {
 
-    private final TranslatorService translator = new TranslatorService();
-    private final PdfRebuilderService rebuilder = new PdfRebuilderService();
+    private final TranslationCoordinatorService translationCoordinator = new TranslationCoordinatorService();
+    private final TranslationTaskManager taskManager = new TranslationTaskManager();
 
     private TextArea logArea;
     private ProgressBar progressBar;
     private Button pauseButton;
-
-    private final AtomicBoolean paused = new AtomicBoolean(false);
-    private final AtomicBoolean stopped = new AtomicBoolean(false);
-
-    private volatile Task<Void> currentTask;
-
-    private static final int MIN_TEXT_CHARS_PER_PAGE = 140;
-    private static final double MAX_NOISY_RATIO_FOR_EMBEDDED = 0.28d;
-    private static final double MAX_SUSPICIOUS_RATIO_FOR_EMBEDDED = 0.035d;
-    private static final int MIN_SUSPICIOUS_CHARS_PER_PAGE = 10;
 
 
     @Override
@@ -72,27 +61,19 @@ public class TranslatorUI extends Application {
         });
 
         pauseButton.setOnAction(e -> {
-            boolean isPaused = paused.get();
-            paused.set(!isPaused);
-            pauseButton.setText(isPaused ? "⏸️ Pausar" : "▶️ Reanudar");
-            log(isPaused ? "▶️ Reanudando proceso..." : "⏸️ Pausando traducción...");
+            boolean pausedNow = taskManager.togglePause();
+            pauseButton.setText(pausedNow ? "▶️ Reanudar" : "⏸️ Pausar");
+            log(pausedNow ? "⏸️ Pausando traducción..." : "▶️ Reanudando proceso...");
         });
 
         stopButton.setOnAction(e -> {
-            stopped.set(true);
-            paused.set(false);
+            taskManager.requestStop();
             pauseButton.setText("⏸️ Pausar");
-
-            Task<Void> task = currentTask;
-            if (task != null) {
-                task.cancel(true);
-            }
-
             log("🛑 Detencion solicitada. Esperando cierre seguro...");
         });
 
         exitButton.setOnAction(e -> {
-            translator.shutdown();
+            translationCoordinator.shutdown();
             Platform.exit();
             System.exit(0);
         });
@@ -116,262 +97,45 @@ public class TranslatorUI extends Application {
             return;
         }
 
-        paused.set(false);
-        stopped.set(false);
+        taskManager.resetControlFlags();
         pauseButton.setText("⏸️ Pausar");
 
-        Task<Void> task = new Task<>() {
+        TranslationRequest request = new TranslationRequest(pdfFile, "Spanish");
+        Task<TranslationResult> task = taskManager.start(request, translationCoordinator, new TranslationProgressListener() {
             @Override
-            protected Void call() {
-                try {
-                    log("📐 Analizando maquetación y extrayendo texto...");
-
-                    PdfExtractorService extractor = new PdfExtractorService();
-                    List<Paragraph> paragraphs = extractor.extractParagraphs(pdfFile.getAbsolutePath());
-                    Map<Integer, PageMeta> layoutInfo = extractor.getLayoutInfo();
-
-                    boolean poorEmbeddedQuality = shouldUseOcrFallback(paragraphs, layoutInfo);
-                    if (paragraphs.isEmpty() || poorEmbeddedQuality) {
-                        if (paragraphs.isEmpty()) {
-                            log("🧠 No se detecto texto embebido. Activando OCR embebido...");
-                        } else {
-                            log("🧠 Texto embebido detectado pero con calidad baja. Activando OCR embebido...");
-                        }
-                        PdfToParagraphService ocrExtractor = new PdfToParagraphService();
-                        paragraphs = ocrExtractor.extractParagraphsFromPdf(pdfFile);
-                        layoutInfo = ocrExtractor.getLayoutInfo();
-                    }
-
-                    int total = paragraphs.size();
-                    if (total == 0) {
-                        log("❌ No se encontraron párrafos para traducir.");
-                        return null;
-                    }
-
-                    log("📄 Párrafos detectados: " + total);
-
-                    int workers = Math.max(1, Runtime.getRuntime().availableProcessors());
-                    log("⚙️ Traducción paralela habilitada con " + workers + " hilos.");
-
-                    ExecutorService translationPool = Executors.newFixedThreadPool(workers);
-                    CompletionService<TranslationResult> completionService = new ExecutorCompletionService<>(translationPool);
-
-                    int submitted = 0;
-                    int completed = 0;
-                    int inFlight = 0;
-
-                    try {
-                        while (completed < total) {
-                            if (isCancelled() || stopped.get() || Thread.currentThread().isInterrupted()) {
-                                log("⛔ Proceso detenido por el usuario.");
-                                return null;
-                            }
-
-                            while (!paused.get() && submitted < total && inFlight < workers) {
-                                final int idx = submitted;
-                                final Paragraph paragraph = paragraphs.get(idx);
-                                completionService.submit(() -> {
-                                    String sourceText = paragraph.getFullText();
-                                    String translated = translator.translate(
-                                            sourceText.replaceAll("[^\\p{L}\\p{N}\\s.,;:!?¿¡()\\[\\]\\-]", ""),
-                                            "Spanish"
-                                    );
-                                    return new TranslationResult(idx, translated);
-                                });
-                                submitted++;
-                                inFlight++;
-                            }
-
-                            if (paused.get()) {
-                                if (inFlight == 0 && submitted < total) {
-                                    Thread.sleep(200);
-                                }
-                                continue;
-                            }
-
-                            Future<TranslationResult> done = completionService.poll(300, TimeUnit.MILLISECONDS);
-                            if (done == null) {
-                                continue;
-                            }
-
-                            TranslationResult result;
-                            try {
-                                result = done.get();
-                            } catch (CancellationException e) {
-                                if (isCancelled() || stopped.get()) {
-                                    return null;
-                                }
-                                throw e;
-                            } catch (ExecutionException e) {
-                                Throwable cause = e.getCause();
-                                if (cause instanceof InterruptedException) {
-                                    Thread.currentThread().interrupt();
-                                    return null;
-                                }
-                                throw e;
-                            }
-                            inFlight--;
-                            completed++;
-
-                            paragraphs.get(result.index()).setTranslatedText(result.text());
-                            updateProgress(completed, total);
-                            log("✅ Traducido párrafo " + completed + "/" + total);
-                        }
-                    } finally {
-                        translationPool.shutdownNow();
-                    }
-
-                    if (isCancelled() || stopped.get() || Thread.currentThread().isInterrupted()) {
-                        log("⛔ Proceso cancelado antes de reconstruir el PDF.");
-                        return null;
-                    }
-
-                    log("🧾 Reconstruyendo PDF con layout original...");
-                    rebuilder.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
-                    log("🎉 Traducción completa con maquetación preservada.");
-
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    log("⛔ Proceso interrumpido.");
-                } catch (CancellationException e) {
-                    log("⛔ Proceso cancelado.");
-                } catch (Exception e) {
-                    log("❌ Error: " + e.getMessage());
-                }
-                return null;
+            public void onLog(String message) {
+                log(message);
             }
-        };
+        });
 
-        currentTask = task;
         progressBar.progressProperty().unbind();
         progressBar.progressProperty().bind(task.progressProperty());
+
         Thread worker = new Thread(task, "pdf-translation-worker");
         worker.setDaemon(true);
         worker.start();
-        task.setOnSucceeded(e -> currentTask = null);
-        task.setOnCancelled(e -> currentTask = null);
-        task.setOnFailed(e -> currentTask = null);
-    }
 
-    private record TranslationResult(int index, String text) {
+        task.setOnSucceeded(e -> {
+            TranslationResult result = task.getValue();
+            if (result != null) {
+                log("📦 Archivo de salida: " + result.outputPdfPath());
+            }
+        });
+        task.setOnCancelled(e -> log("⛔ Proceso cancelado."));
+        task.setOnFailed(e -> {
+            Throwable error = task.getException();
+            if (error instanceof CancellationException) {
+                log("⛔ Proceso cancelado.");
+            } else if (error != null) {
+                log("❌ Error: " + error.getMessage());
+            } else {
+                log("❌ Error desconocido durante la traducción.");
+            }
+        });
     }
 
     private void log(String msg) {
         Platform.runLater(() -> logArea.appendText(msg + "\n"));
-
-    }
-
-    private boolean shouldUseOcrFallback(List<Paragraph> paragraphs, Map<Integer, PageMeta> layoutInfo) {
-        if (paragraphs == null || paragraphs.isEmpty()) {
-            return true;
-        }
-
-        int pages = Math.max(1, layoutInfo.isEmpty()
-                ? paragraphs.stream().mapToInt(Paragraph::getPage).max().orElse(1)
-                : layoutInfo.size());
-
-        int totalChars = paragraphs.stream().mapToInt(p -> p.getFullText().length()).sum();
-        int expectedMinChars = pages * MIN_TEXT_CHARS_PER_PAGE;
-        if (totalChars < expectedMinChars) {
-            return true;
-        }
-
-        double noisyRatio = computeNoisyRatio(paragraphs);
-        if (noisyRatio > MAX_NOISY_RATIO_FOR_EMBEDDED) {
-            return true;
-        }
-
-        double suspiciousRatio = computeSuspiciousRatio(paragraphs);
-        if (suspiciousRatio > MAX_SUSPICIOUS_RATIO_FOR_EMBEDDED) {
-            return true;
-        }
-
-        int suspiciousChars = countSuspiciousChars(paragraphs);
-        return suspiciousChars >= pages * MIN_SUSPICIOUS_CHARS_PER_PAGE;
-    }
-
-    private double computeNoisyRatio(List<Paragraph> paragraphs) {
-        long totalChars = 0;
-        long noisyChars = 0;
-
-        for (Paragraph paragraph : paragraphs) {
-            String text = paragraph.getFullText();
-            for (int i = 0; i < text.length(); i++) {
-                char c = text.charAt(i);
-                if (Character.isWhitespace(c)) {
-                    continue;
-                }
-                totalChars++;
-                if (!Character.isLetterOrDigit(c) && ",.;:!?()[]{}'\"-_/".indexOf(c) < 0) {
-                    noisyChars++;
-                }
-            }
-        }
-
-        if (totalChars == 0) {
-            return 1d;
-        }
-        return (double) noisyChars / (double) totalChars;
-    }
-
-    private double computeSuspiciousRatio(List<Paragraph> paragraphs) {
-        long totalChars = 0;
-        long suspiciousChars = 0;
-
-        for (Paragraph paragraph : paragraphs) {
-            String text = paragraph.getFullText();
-            for (int i = 0; i < text.length(); i++) {
-                char c = text.charAt(i);
-                if (Character.isWhitespace(c)) {
-                    continue;
-                }
-                totalChars++;
-
-                if (c == '?' || c == '\u000B' || c == '\u000C') {
-                    suspiciousChars++;
-                    continue;
-                }
-
-                if (Character.isISOControl(c)) {
-                    suspiciousChars++;
-                    continue;
-                }
-
-                boolean alnum = Character.isLetterOrDigit(c);
-                boolean basicPunct = ",.;:!?()[]{}'\"-_/".indexOf(c) >= 0;
-                if (!alnum && !basicPunct) {
-                    suspiciousChars++;
-                }
-            }
-        }
-
-        if (totalChars == 0) {
-            return 1d;
-        }
-        return (double) suspiciousChars / (double) totalChars;
-    }
-
-    private int countSuspiciousChars(List<Paragraph> paragraphs) {
-        int suspiciousChars = 0;
-        for (Paragraph paragraph : paragraphs) {
-            String text = paragraph.getFullText();
-            for (int i = 0; i < text.length(); i++) {
-                char c = text.charAt(i);
-                if (Character.isWhitespace(c)) {
-                    continue;
-                }
-                if (c == '?' || c == '\u000B' || c == '\u000C' || Character.isISOControl(c)) {
-                    suspiciousChars++;
-                    continue;
-                }
-                boolean alnum = Character.isLetterOrDigit(c);
-                boolean basicPunct = ",.;:!?()[]{}'\"-_/".indexOf(c) >= 0;
-                if (!alnum && !basicPunct) {
-                    suspiciousChars++;
-                }
-            }
-        }
-        return suspiciousChars;
     }
 
     public static void main(String[] args) {
