@@ -1,0 +1,23 @@
+[
+  {"source": "Armor Class", "target": "Clase de Armadura"},
+  {"source": "Hit Points", "target": "Puntos de Golpe"},
+  {"source": "Strength", "target": "Fuerza"},
+  {"source": "Dexterity", "target": "Destreza"},
+  {"source": "Constitution", "target": "Constitucion"},
+  {"source": "Intelligence", "target": "Inteligencia"},
+  {"source": "Wisdom", "target": "Sabiduria"},
+  {"source": "Charisma", "target": "Carisma"},
+  {"source": "Saving Throw", "target": "Tirada de Salvacion"},
+  {"source": "Spell Slot", "target": "Espacio de Conjuro"},
+  {"source": "Cantrip", "target": "Truco"},
+  {"source": "Dungeon Master", "target": "Dungeon Master", "preserve": true},
+  {"source": "Short Rest", "target": "Descanso Corto"},
+  {"source": "Long Rest", "target": "Descanso Largo"},
+  {"source": "Advantage", "target": "Ventaja"},
+  {"source": "Disadvantage", "target": "Desventaja"},
+  {"source": "proficiency bonus", "target": "bonificador de competencia"},
+  {"source": "initiative", "target": "iniciativa"},
+  {"source": "melee weapon attack", "target": "ataque de arma cuerpo a cuerpo"},
+  {"source": "ranged weapon attack", "target": "ataque de arma a distancia"}
+]
+

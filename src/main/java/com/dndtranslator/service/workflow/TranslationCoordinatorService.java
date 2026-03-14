@@ -17,6 +17,7 @@ public class TranslationCoordinatorService {
 
     private final OcrDecisionPort ocrDecisionPort;
     private final TextSanitizer textSanitizer;
+    private final GlossaryService glossaryService;
     private final ParagraphTranslationExecutor paragraphTranslationExecutor;
     private final TranslatorGateway translatorGateway;
     private final PdfRebuilderGateway pdfRebuilderGateway;
@@ -25,7 +26,14 @@ public class TranslationCoordinatorService {
     private final Runnable shutdownHook;
 
     public TranslationCoordinatorService() {
-        this(new TranslatorService(), new PdfRebuilderService(), new OcrDecisionService(), new TextSanitizer(), new ParagraphTranslationExecutor());
+        this(
+                new TranslatorService(),
+                new PdfRebuilderService(),
+                new OcrDecisionService(),
+                new TextSanitizer(),
+                new GlossaryService(),
+                new ParagraphTranslationExecutor()
+        );
     }
 
     public TranslationCoordinatorService(
@@ -36,8 +44,27 @@ public class TranslationCoordinatorService {
             ParagraphTranslationExecutor paragraphTranslationExecutor
     ) {
         this(
+                translatorService,
+                pdfRebuilderService,
+                ocrDecisionService,
+                textSanitizer,
+                new GlossaryService(),
+                paragraphTranslationExecutor
+        );
+    }
+
+    public TranslationCoordinatorService(
+            TranslatorService translatorService,
+            PdfRebuilderService pdfRebuilderService,
+            OcrDecisionService ocrDecisionService,
+            TextSanitizer textSanitizer,
+            GlossaryService glossaryService,
+            ParagraphTranslationExecutor paragraphTranslationExecutor
+    ) {
+        this(
                 ocrDecisionService::shouldUseOcrFallback,
                 textSanitizer,
+                glossaryService,
                 paragraphTranslationExecutor,
                 translatorService::translate,
                 pdfRebuilderService::rebuild,
@@ -67,6 +94,7 @@ public class TranslationCoordinatorService {
         this(
                 extractionQualityEvaluator::shouldUseOcrFallback,
                 textSanitizer,
+                new GlossaryService(),
                 new ParagraphTranslationExecutor(),
                 translatorGateway,
                 pdfRebuilderGateway,
@@ -79,6 +107,7 @@ public class TranslationCoordinatorService {
     public TranslationCoordinatorService(
             OcrDecisionPort ocrDecisionPort,
             TextSanitizer textSanitizer,
+            GlossaryService glossaryService,
             ParagraphTranslationExecutor paragraphTranslationExecutor,
             TranslatorGateway translatorGateway,
             PdfRebuilderGateway pdfRebuilderGateway,
@@ -88,6 +117,7 @@ public class TranslationCoordinatorService {
     ) {
         this.ocrDecisionPort = ocrDecisionPort;
         this.textSanitizer = textSanitizer;
+        this.glossaryService = glossaryService;
         this.paragraphTranslationExecutor = paragraphTranslationExecutor;
         this.translatorGateway = translatorGateway;
         this.pdfRebuilderGateway = pdfRebuilderGateway;
@@ -104,7 +134,7 @@ public class TranslationCoordinatorService {
                 ? "Spanish"
                 : request.targetLanguage().trim();
 
-        listener.onLog("📐 Analizando maquetación y extrayendo texto...");
+        listener.onLog("📐 Analizando maquetacion y extrayendo texto...");
 
         ExtractionSnapshot extraction = resolveExtraction(pdfFile, listener);
         List<Paragraph> paragraphs = extraction.paragraphs();
@@ -115,7 +145,7 @@ public class TranslationCoordinatorService {
             throw new IllegalStateException("No se encontraron parrafos para traducir.");
         }
 
-        listener.onLog("📄 Párrafos detectados: " + total);
+        listener.onLog("📄 Parrafos detectados: " + total);
 
         translateParagraphs(paragraphs, targetLanguage, listener);
 
@@ -124,7 +154,7 @@ public class TranslationCoordinatorService {
         pdfRebuilderGateway.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
 
         String outputPath = buildOutputPath(pdfFile.getAbsolutePath());
-        listener.onLog("🎉 Traducción completa con maquetación preservada.");
+        listener.onLog("🎉 Traduccion completa con maquetacion preservada.");
         return new TranslationResult(outputPath, total, extraction.usedOcrFallback());
     }
 
@@ -160,6 +190,7 @@ public class TranslationCoordinatorService {
                 paragraphs,
                 targetLanguage,
                 textSanitizer,
+                glossaryService,
                 translatorGateway,
                 listener
         );

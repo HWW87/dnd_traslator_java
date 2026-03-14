@@ -28,10 +28,11 @@ public class ParagraphTranslationExecutor {
             List<Paragraph> paragraphs,
             String targetLanguage,
             TextSanitizer textSanitizer,
+            GlossaryService glossaryService,
             TranslationCoordinatorService.TranslatorGateway translatorGateway,
             TranslationEventListener listener
     ) throws InterruptedException, ExecutionException {
-        listener.onLog("⚙️ Traducción paralela habilitada con " + workers + " hilos.");
+        listener.onLog("Traduccion paralela habilitada con " + workers + " hilos.");
 
         ExecutorService pool = Executors.newFixedThreadPool(workers);
         CompletionService<ParagraphTranslationResult> completionService = new ExecutorCompletionService<>(pool);
@@ -52,8 +53,10 @@ public class ParagraphTranslationExecutor {
                     completionService.submit(() -> {
                         String sourceText = paragraph.getFullText();
                         String sanitized = textSanitizer.sanitizeForTranslation(sourceText);
-                        String translated = translatorGateway.translate(sanitized, targetLanguage);
-                        return new ParagraphTranslationResult(index, translated);
+                        GlossaryService.GlossaryApplication application = glossaryService.applyBeforeTranslation(sanitized);
+                        String translated = translatorGateway.translate(application.text(), targetLanguage);
+                        String restored = glossaryService.applyAfterTranslation(translated, application);
+                        return new ParagraphTranslationResult(index, restored);
                     });
                     submitted++;
                     inFlight++;
@@ -74,7 +77,7 @@ public class ParagraphTranslationExecutor {
 
                 paragraphs.get(result.index()).setTranslatedText(result.translatedText());
                 listener.onProgress(new TranslationProgress(completed, total));
-                listener.onLog("✅ Traducido párrafo " + completed + "/" + total);
+                listener.onLog("Traducido parrafo " + completed + "/" + total);
             }
         } finally {
             pool.shutdownNow();
@@ -97,4 +100,3 @@ public class ParagraphTranslationExecutor {
     private record ParagraphTranslationResult(int index, String translatedText) {
     }
 }
-
