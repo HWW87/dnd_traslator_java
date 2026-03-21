@@ -5,12 +5,10 @@ import com.dndtranslator.model.Paragraph;
 import net.sourceforge.tess4j.ITessAPI;
 import net.sourceforge.tess4j.ITesseract;
 import net.sourceforge.tess4j.Tesseract;
-import net.sourceforge.tess4j.TesseractException;
 import net.sourceforge.tess4j.Word;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
 
-import java.awt.Color;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -21,19 +19,17 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.Set;
 
 public class PdfToParagraphService {
 
-    private static final int OCR_DPI = 300;
-    private static final float OCR_TO_PDF_UNITS = 72f / OCR_DPI;
+    private static final int DEFAULT_OCR_DPI = 220;
+    private static final double PREPROCESS_SCORE_THRESHOLD = 12.0d;
 
     private final Map<Integer, PageMeta> layoutInfo = new HashMap<>();
 
@@ -42,41 +38,60 @@ public class PdfToParagraphService {
     }
 
     public List<Paragraph> extractParagraphsFromPdf(File pdf) throws Exception {
-        List<Paragraph> result = new ArrayList<>();
         layoutInfo.clear();
 
-        List<PageImageRef> renderedPages = new ArrayList<>();
-        try (PDDocument document = PDDocument.load(pdf)) {
-            PDFRenderer renderer = new PDFRenderer(document);
+        int configuredDpi = resolveOcrDpi();
+        List<Integer> dpiAttempts = buildDpiAttempts(configuredDpi);
+        OutOfMemoryError lastOom = null;
 
-            // Render secuencial: PDFRenderer comparte estado interno del documento.
-            for (int pageIndex = 0; pageIndex < document.getNumberOfPages(); pageIndex++) {
-                BufferedImage image = renderer.renderImageWithDPI(pageIndex, OCR_DPI);
-                float width = image.getWidth() * OCR_TO_PDF_UNITS;
-                float height = image.getHeight() * OCR_TO_PDF_UNITS;
-                renderedPages.add(new PageImageRef(pageIndex, image, width, height));
+        for (int attemptIndex = 0; attemptIndex < dpiAttempts.size(); attemptIndex++) {
+            int attemptDpi = dpiAttempts.get(attemptIndex);
+            try {
+                return extractParagraphsFromPdfWithDpi(pdf, attemptDpi);
+            } catch (OutOfMemoryError oom) {
+                lastOom = oom;
+                layoutInfo.clear();
+                boolean hasMoreAttempts = attemptIndex < dpiAttempts.size() - 1;
+                if (!hasMoreAttempts) {
+                    OutOfMemoryError wrapped = new OutOfMemoryError("Memoria insuficiente para OCR incluso con DPI reducido. Prueba con un PDF mas corto o asigna mas heap.");
+                    wrapped.initCause(oom);
+                    throw wrapped;
+                }
+                int nextDpi = dpiAttempts.get(attemptIndex + 1);
+                System.err.println("OOM durante OCR con DPI=" + attemptDpi + ". Reintentando con DPI=" + nextDpi + "...");
+                System.gc();
             }
         }
 
-        int ocrThreads = resolveOcrThreads();
-        ExecutorService ocrPool = Executors.newFixedThreadPool(ocrThreads);
-        List<Future<PageOcrResult>> futures = new ArrayList<>();
+        throw lastOom != null
+                ? lastOom
+                : new OutOfMemoryError("Memoria insuficiente durante OCR.");
+    }
 
-        try {
-            for (PageImageRef page : renderedPages) {
-                futures.add(ocrPool.submit(() -> extractParagraphsFromImage(page)));
-            }
+    private List<Paragraph> extractParagraphsFromPdfWithDpi(File pdf, int ocrDpi) throws Exception {
+        List<Paragraph> result = new ArrayList<>();
+        float ocrToPdfUnits = 72f / ocrDpi;
+        ITesseract tesseract = createTesseract();
 
-            for (Future<PageOcrResult> future : futures) {
-                PageOcrResult pageResult = future.get();
-                layoutInfo.put(pageResult.pageNumber(), pageResult.meta());
-                result.addAll(pageResult.paragraphs());
+        try (PDDocument document = PDDocument.load(pdf)) {
+            PDFRenderer renderer = new PDFRenderer(document);
+            int totalPages = document.getNumberOfPages();
+
+            // Render y OCR en streaming por pagina para evitar picos de heap.
+            for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+                System.out.println("OCR pagina " + (pageIndex + 1) + "/" + totalPages + " (" + ocrDpi + " DPI)");
+                BufferedImage image = renderer.renderImageWithDPI(pageIndex, ocrDpi);
+                try {
+                    float width = image.getWidth() * ocrToPdfUnits;
+                    float height = image.getHeight() * ocrToPdfUnits;
+                    PageImageRef page = new PageImageRef(pageIndex, image, width, height);
+                    PageOcrResult pageResult = extractParagraphsFromImage(tesseract, page, ocrToPdfUnits);
+                    layoutInfo.put(pageResult.pageNumber(), pageResult.meta());
+                    result.addAll(pageResult.paragraphs());
+                } finally {
+                    image.flush();
+                }
             }
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            throw new RuntimeException("Error OCR embebido: " + cause.getMessage(), cause);
-        } finally {
-            ocrPool.shutdownNow();
         }
 
         result.sort(Comparator
@@ -88,15 +103,30 @@ public class PdfToParagraphService {
         return result;
     }
 
-    private PageOcrResult extractParagraphsFromImage(PageImageRef page) throws IOException, TesseractException {
-        ITesseract tesseract = createTesseract();
+    private PageOcrResult extractParagraphsFromImage(ITesseract tesseract, PageImageRef page, float ocrToPdfUnits) {
         int pageNumber = page.pageIndex() + 1;
 
-        List<Paragraph> primary = extractLineParagraphs(tesseract, page.image(), pageNumber);
-        BufferedImage preprocessed = preprocessForOcr(page.image());
-        List<Paragraph> enhanced = extractLineParagraphs(tesseract, preprocessed, pageNumber);
+        List<Paragraph> primary = extractLineParagraphs(tesseract, page.image(), pageNumber, ocrToPdfUnits);
+        double primaryScore = scoreParagraphs(primary);
 
-        List<Paragraph> selected = scoreParagraphs(enhanced) >= scoreParagraphs(primary) ? enhanced : primary;
+        List<Paragraph> selected = primary;
+        if (primaryScore < PREPROCESS_SCORE_THRESHOLD) {
+            try {
+                BufferedImage preprocessed = preprocessForOcr(page.image());
+                try {
+                    List<Paragraph> enhanced = extractLineParagraphs(tesseract, preprocessed, pageNumber, ocrToPdfUnits);
+                    if (scoreParagraphs(enhanced) >= primaryScore) {
+                        selected = enhanced;
+                    }
+                } finally {
+                    preprocessed.flush();
+                }
+            } catch (OutOfMemoryError oom) {
+                // Si no alcanza memoria para preprocesar, seguimos con OCR primario.
+                System.err.println("OOM en preprocesado OCR de pagina " + pageNumber + ". Se continua sin preprocesado.");
+            }
+        }
+
         ColumnLayout layout = detectColumnLayout(page.pageWidth(), xPositions(selected));
 
         selected.sort(Comparator
@@ -118,7 +148,12 @@ public class PdfToParagraphService {
         return new PageOcrResult(pageNumber, selected, meta);
     }
 
-    private List<Paragraph> extractLineParagraphs(ITesseract tesseract, BufferedImage image, int pageNumber) throws TesseractException {
+    private List<Paragraph> extractLineParagraphs(
+            ITesseract tesseract,
+            BufferedImage image,
+            int pageNumber,
+            float ocrToPdfUnits
+    ) {
         List<Word> lines = tesseract.getWords(image, ITessAPI.TessPageIteratorLevel.RIL_TEXTLINE);
         List<Paragraph> blocks = new ArrayList<>();
 
@@ -129,9 +164,9 @@ public class PdfToParagraphService {
             }
 
             Rectangle bbox = line.getBoundingBox();
-            float x = bbox != null ? bbox.x * OCR_TO_PDF_UNITS : 0f;
-            float y = bbox != null ? bbox.y * OCR_TO_PDF_UNITS : 0f;
-            float fontSize = bbox != null ? Math.max(8f, (bbox.height * OCR_TO_PDF_UNITS) * 0.7f) : 10f;
+            float x = bbox != null ? bbox.x * ocrToPdfUnits : 0f;
+            float y = bbox != null ? bbox.y * ocrToPdfUnits : 0f;
+            float fontSize = bbox != null ? Math.max(8f, (bbox.height * ocrToPdfUnits) * 0.7f) : 10f;
 
             blocks.add(new Paragraph(text, pageNumber, x, y, "OCR", fontSize));
         }
@@ -146,8 +181,10 @@ public class PdfToParagraphService {
         for (int y = 0; y < source.getHeight(); y++) {
             for (int x = 0; x < source.getWidth(); x++) {
                 int rgb = source.getRGB(x, y);
-                Color c = new Color(rgb);
-                int gray = (int) (0.299 * c.getRed() + 0.587 * c.getGreen() + 0.114 * c.getBlue());
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                int gray = (299 * r + 587 * g + 114 * b) / 1000;
                 int bw = gray > threshold ? 255 : 0;
                 int packed = (bw << 16) | (bw << 8) | bw;
                 out.setRGB(x, y, packed);
@@ -343,19 +380,27 @@ public class PdfToParagraphService {
         return new ColumnLayout(2, splitByMedian);
     }
 
-    private int resolveOcrThreads() {
-        String raw = System.getenv("DND_OCR_THREADS");
-        int fallback = Math.max(1, Runtime.getRuntime().availableProcessors());
+    private int resolveOcrDpi() {
+        String raw = System.getenv("DND_OCR_DPI");
         if (raw == null || raw.isBlank()) {
-            return fallback;
+            return DEFAULT_OCR_DPI;
         }
         try {
             int configured = Integer.parseInt(raw.trim());
-            return configured > 0 ? configured : fallback;
+            return Math.max(150, Math.min(configured, 300));
         } catch (NumberFormatException e) {
-            return fallback;
+            return DEFAULT_OCR_DPI;
         }
     }
+
+    private List<Integer> buildDpiAttempts(int configuredDpi) {
+        Set<Integer> attempts = new LinkedHashSet<>();
+        attempts.add(Math.max(150, Math.min(configuredDpi, 300)));
+        attempts.add(180);
+        attempts.add(150);
+        return new ArrayList<>(attempts);
+    }
+
 
     private String normalize(String s) {
         return Optional.ofNullable(s).orElse("").replaceAll("\\s+", " ").trim();

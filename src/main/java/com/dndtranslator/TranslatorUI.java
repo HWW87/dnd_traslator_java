@@ -10,7 +10,10 @@ import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextArea;
 import javafx.scene.layout.HBox;
@@ -19,6 +22,7 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.File;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 
 /**
@@ -67,9 +71,28 @@ public class TranslatorUI extends Application {
         });
 
         stopButton.setOnAction(e -> {
-            taskManager.requestStop();
+            ButtonType savePartial = new ButtonType("Si, guardar avance", ButtonBar.ButtonData.YES);
+            ButtonType stopOnly = new ButtonType("No, solo detener", ButtonBar.ButtonData.NO);
+            ButtonType keepRunning = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+            Alert confirmStop = new Alert(Alert.AlertType.CONFIRMATION);
+            confirmStop.setTitle("Detener traduccion");
+            confirmStop.setHeaderText("Quieres exportar un PDF con el progreso actual?");
+            confirmStop.setContentText("Si eliges guardar avance, se generara un PDF con los parrafos traducidos hasta ahora.");
+            confirmStop.getButtonTypes().setAll(savePartial, stopOnly, keepRunning);
+
+            Optional<ButtonType> decision = confirmStop.showAndWait();
+            if (decision.isEmpty() || decision.get() == keepRunning) {
+                log("Continuando traduccion.");
+                return;
+            }
+
+            boolean exportPartial = decision.get() == savePartial;
+            taskManager.requestStop(exportPartial);
             pauseButton.setText("Pausar");
-            log("Detencion solicitada. Esperando cierre seguro...");
+            log(exportPartial
+                    ? "Detencion solicitada. Se exportara un PDF parcial con el avance actual..."
+                    : "Detencion solicitada. Esperando cierre seguro...");
         });
 
         exitButton.setOnAction(e -> {
