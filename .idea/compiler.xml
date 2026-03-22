@@ -6,6 +6,7 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
+        <module name="dnd-translator" />
         <module name="dnd-translator-java" />
         <module name="dnd_traslator_java" />
       </profile>

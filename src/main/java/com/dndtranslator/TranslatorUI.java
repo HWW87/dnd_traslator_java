@@ -21,6 +21,9 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.File;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
@@ -30,6 +33,8 @@ import java.util.concurrent.CancellationException;
  * La UI solo gestiona eventos, binding de estado y mensajes al usuario.
  */
 public class TranslatorUI extends Application {
+
+    private static final Logger logger = LoggerFactory.getLogger(TranslatorUI.class);
 
     private final TranslationCoordinatorService translationCoordinator = new TranslationCoordinatorService();
     private final TranslationTaskManager taskManager = new TranslationTaskManager();
@@ -110,6 +115,8 @@ public class TranslatorUI extends Application {
         Scene scene = new Scene(layout, 850, 520);
         stage.setScene(scene);
         stage.show();
+        logger.info("Aplicacion DnD Translator iniciada correctamente.");
+        log("Listo. Selecciona un PDF para comenzar.");
     }
 
     private void processPDF(File pdfFile) {
@@ -156,6 +163,7 @@ public class TranslatorUI extends Application {
     }
 
     private void log(String msg) {
+        logger.info("[UI] {}", msg);
         Platform.runLater(() -> logArea.appendText(msg + "\n"));
     }
 

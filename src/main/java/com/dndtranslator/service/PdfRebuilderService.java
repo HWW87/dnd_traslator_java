@@ -7,6 +7,8 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -19,6 +21,8 @@ import java.util.Locale;
 import java.util.Map;
 
 public class PdfRebuilderService {
+
+    private static final Logger logger = LoggerFactory.getLogger(PdfRebuilderService.class);
 
     private static final String CJK_FONT_ENV_VAR = "DND_CJK_FONT_PATH";
     private static final String CJK_RESOURCE_PATH = "/fonts/NotoSansCJKsc-Regular.otf";
@@ -50,7 +54,7 @@ public class PdfRebuilderService {
             if (cjkFont != null) {
                 font = cjkFont;
             } else {
-                System.err.println("No se encontro fuente CJK fallback. Define " + CJK_FONT_ENV_VAR + " con ruta a .ttf/.otf para evitar reemplazos por '?'.");
+                logger.warn("No se encontro fuente CJK fallback. Define {} con ruta a .ttf/.otf para evitar reemplazos por '?'.", CJK_FONT_ENV_VAR);
             }
 
             int currentPageNumber = -1;
@@ -108,7 +112,7 @@ public class PdfRebuilderService {
 
             File outFile = new File(originalPath.replace(".pdf", "_translated_layout.pdf"));
             doc.save(outFile);
-            System.out.println("PDF traducido con layout guardado en: " + outFile.getAbsolutePath());
+            logger.info("PDF traducido con layout guardado en: {}", outFile.getAbsolutePath());
         }
     }
 
@@ -215,11 +219,11 @@ public class PdfRebuilderService {
         try (InputStream cjkStream = this.getClass().getResourceAsStream(CJK_RESOURCE_PATH)) {
             if (cjkStream != null) {
                 PDType0Font resourceFont = PDType0Font.load(doc, cjkStream);
-                System.out.println("Usando fuente CJK embebida: " + CJK_RESOURCE_PATH);
+                logger.info("Usando fuente CJK embebida: {}", CJK_RESOURCE_PATH);
                 return resourceFont;
             }
         } catch (IOException e) {
-            System.err.println("No se pudo cargar fuente CJK embebida: " + e.getMessage());
+            logger.warn("No se pudo cargar fuente CJK embebida: {}", e.getMessage());
         }
 
         String customPath = System.getenv(CJK_FONT_ENV_VAR);
@@ -297,7 +301,7 @@ public class PdfRebuilderService {
 
         try {
             PDType0Font loaded = PDType0Font.load(doc, file);
-            System.out.println("Usando fuente CJK " + sourceLabel + ": " + file.getAbsolutePath());
+            logger.info("Usando fuente CJK ({}): {}", sourceLabel, file.getAbsolutePath());
             return loaded;
         } catch (IOException e) {
             return null;
