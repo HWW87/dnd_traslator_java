@@ -1,47 +1,69 @@
 package com.dndtranslator.service;
 
-import org.json.JSONObject;
+import com.dndtranslator.model.TextBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.dndtranslator.model.TextBlock;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.Charset;
-import java.sql.*;
-import java.time.LocalDateTime;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
- * 🌐 Servicio de traducción con segmentación inteligente.
- * Divide texto largo en bloques de ~1000 palabras para evitar truncamientos.
- * Usa modelo Gemma2 por defecto y Llama3.2 como fallback.
+ * Servicio de traduccion de alto nivel.
+ * Orquesta segmentacion, cache, seleccion de modelo y cliente de Ollama.
  */
 public class TranslatorService {
 
     private static final Logger logger = LoggerFactory.getLogger(TranslatorService.class);
 
-    private static final String PRIMARY_MODEL = "gemma3:1b";
-    private static final String FALLBACK_MODEL = "llama3.2:1b-instruct";
-    private static final String OLLAMA_URL = "http://localhost:11434/api/generate";
-    private static final String CACHE_DB = "translations.db";
     private static final int DEFAULT_MAX_THREADS = Math.max(1, Runtime.getRuntime().availableProcessors());
     private static final int RETRY_COUNT = 2;
-    private static final int CACHE_BUSY_TIMEOUT_MS = 5000;
-    private static final int CACHE_WRITE_RETRIES = 2;
 
-    private final int maxThreads = resolveParallelism();
-    private final ExecutorService executor = Executors.newFixedThreadPool(maxThreads);
-    private final HttpClient client = HttpClient.newHttpClient();
-    private final ReentrantLock cacheWriteLock = new ReentrantLock();
+    private final int maxThreads;
+    private final ExecutorService executor;
+    private final OllamaClient ollamaClient;
+    private final TranslationCacheRepository cacheRepository;
+    private final TranslationSegmenter segmenter;
+    private final ModelResolver modelResolver;
 
     public TranslatorService() {
-        initCache();
+        this(
+                new OllamaClient(),
+                new TranslationCacheRepository(),
+                new TranslationSegmenter(),
+                new ModelResolver(),
+                resolveParallelismFromEnv()
+        );
+    }
+
+    public TranslatorService(
+            OllamaClient ollamaClient,
+            TranslationCacheRepository cacheRepository,
+            TranslationSegmenter segmenter,
+            ModelResolver modelResolver
+    ) {
+        this(ollamaClient, cacheRepository, segmenter, modelResolver, resolveParallelismFromEnv());
+    }
+
+    TranslatorService(
+            OllamaClient ollamaClient,
+            TranslationCacheRepository cacheRepository,
+            TranslationSegmenter segmenter,
+            ModelResolver modelResolver,
+            int maxThreads
+    ) {
+        this.ollamaClient = ollamaClient;
+        this.cacheRepository = cacheRepository;
+        this.segmenter = segmenter;
+        this.modelResolver = modelResolver;
+        this.maxThreads = Math.max(1, maxThreads);
+        this.executor = Executors.newFixedThreadPool(this.maxThreads);
         logger.info("TranslatorService iniciado con {} hilos de traduccion.", maxThreads);
     }
 
@@ -78,19 +100,18 @@ public class TranslatorService {
     public String translate(String text, String targetLanguage) {
         if (text == null || text.isBlank()) return "";
 
-        // 🔸 Revisión de caché
-        /*String cached = getCachedTranslation(text);
-        if (cached != null) return cached;*/
+        Optional<String> cached = cacheRepository.findTranslation(text);
+        if (cached.isPresent()) {
+            return cached.get();
+        }
 
-        // 🔸 Detección del modelo disponible
-        String model = getAvailableModel();
+        String model = resolveModel();
         if (model == null) {
             logger.warn("Ningun modelo Ollama disponible. Ejecute 'ollama serve'.");
             return "[Error: Ollama no disponible]";
         }
 
-        // 🔸 Segmentar el texto en bloques más pequeños
-        List<String> segments = segmentText(text, 1000); // ≈1500 tokens
+        List<String> segments = segmenter.segment(text);
         StringBuilder translatedTotal = new StringBuilder();
 
         for (String segment : segments) {
@@ -105,68 +126,18 @@ public class TranslatorService {
             }
         }
 
-        String translatedFull = translatedTotal.toString().trim();
+        String translatedFull = cleanFinalTranslation(translatedTotal.toString());
         if (!Thread.currentThread().isInterrupted()) {
-            cacheTranslation(text, translatedFull);
+            cacheRepository.saveTranslation(text, translatedFull, model);
         }
         return translatedFull;
     }
 
-    // ===========================================================
-    // 🔹 Segmenta texto en bloques de n palabras aprox.
-    // ===========================================================
-    private List<String> segmentText(String text, int maxWords) {
-        List<String> segments = new ArrayList<>();
-        String[] words = text.split("\\s+");
-        StringBuilder current = new StringBuilder();
-
-        for (String word : words) {
-            current.append(word).append(" ");
-            if (current.toString().split("\\s+").length >= maxWords) {
-                segments.add(current.toString().trim());
-                current.setLength(0);
-            }
-        }
-
-        if (!current.isEmpty()) segments.add(current.toString().trim());
-        return segments;
-    }
-
-    // ===========================================================
-    // 🔹 Traduce un solo fragmento con reintentos
-    // ===========================================================
     private String translateSegment(String text, String targetLanguage, String model) {
         for (int attempt = 1; attempt <= RETRY_COUNT; attempt++) {
             try {
-                String prompt = String.format("""
-                        Translate the following text *directly* to %s.
-                        Rules:
-                        - Do NOT include explanations, notes, or introductions.
-                        - Preserve proper names and RPG terminology.
-                        - Maintain line breaks and paragraph structure.
-                        - Output ONLY the translated text.
-                        
-                        %s
-                        """, targetLanguage, text);
-
-                JSONObject body = new JSONObject()
-                        .put("model", model)
-                        .put("prompt", prompt)
-                        .put("stream", false);
-
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(OLLAMA_URL))
-                        .header("Content-Type", "application/json; charset=utf-8")
-                        .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                        .build();
-
-                HttpResponse<String> response =
-                        client.send(request, HttpResponse.BodyHandlers.ofString(Charset.forName("UTF-8")));
-                if (response.statusCode() == 200) {
-                    String translated = parseOllamaResponse(response.body());
-                    return cleanTranslation(translated);
-                }
-
+                String translated = ollamaClient.translate(model, buildPrompt(text, targetLanguage));
+                return cleanTranslation(translated);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return "";
@@ -189,117 +160,32 @@ public class TranslatorService {
                 .trim();
     }
 
-    // ===========================================================
-    // 🔹 Detección de modelo disponible
-    // ===========================================================
-    private String getAvailableModel() {
-        try {
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create("http://localhost:11434/api/tags"))
-                    .GET().build();
-
-            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (res.statusCode() != 200) return null;
-            String body = res.body();
-
-            if (body.contains(PRIMARY_MODEL.split(":")[0])) return PRIMARY_MODEL;
-            if (body.contains(FALLBACK_MODEL.split(":")[0])) return FALLBACK_MODEL;
-            return null;
-        } catch (Exception e) {
+    private String resolveModel() {
+        Optional<String> tagsPayload = ollamaClient.fetchAvailableModelsPayload();
+        if (tagsPayload.isEmpty()) {
             return null;
         }
+        return modelResolver.resolveModel(tagsPayload.get());
     }
 
-    // ===========================================================
-    // 🔹 Parseo y Cache (igual que antes)
-    // ===========================================================
-    private String parseOllamaResponse(String body) {
-        try {
-            JSONObject jo = new JSONObject(body);
-            return jo.get("response").toString();
-        } catch (Exception e) {
-            return body.trim();
-        }
+    private String buildPrompt(String text, String targetLanguage) {
+        return String.format("""
+                Translate the following text *directly* to %s.
+                Rules:
+                - Do NOT include explanations, notes, or introductions.
+                - Preserve proper names and RPG terminology.
+                - Maintain line breaks and paragraph structure.
+                - Output ONLY the translated text.
+
+                %s
+                """, targetLanguage, text);
     }
 
-    private void initCache() {
-        try (Connection conn = openCacheConnection();
-             Statement stmt = conn.createStatement()) {
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS translations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    original TEXT UNIQUE,
-                    translated TEXT,
-                    model TEXT,
-                    created_at TEXT
-                )
-            """);
-        } catch (SQLException e) {
-            logger.error("Error creando cache DB: {}", e.getMessage());
-        }
+    private String cleanFinalTranslation(String text) {
+        return text == null ? "" : text.trim();
     }
 
-    private String getCachedTranslation(String original) {
-        try (Connection conn = openCacheConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT translated FROM translations WHERE original = ?")) {
-            ps.setString(1, original);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) return rs.getString("translated");
-        } catch (SQLException ignored) {
-        }
-        return null;
-    }
-
-    private void cacheTranslation(String original, String translated) {
-        cacheWriteLock.lock();
-        try {
-            for (int attempt = 1; attempt <= CACHE_WRITE_RETRIES; attempt++) {
-                try (Connection conn = openCacheConnection();
-                     PreparedStatement ps = conn.prepareStatement(
-                             "INSERT OR IGNORE INTO translations(original, translated, model, created_at) VALUES (?, ?, ?, ?)")) {
-                    ps.setString(1, original);
-                    ps.setString(2, translated);
-                    ps.setString(3, PRIMARY_MODEL);
-                    ps.setString(4, LocalDateTime.now().toString());
-                    ps.executeUpdate();
-                    return;
-                } catch (SQLException e) {
-                    boolean busy = isSqliteBusy(e);
-                    if (!busy || attempt == CACHE_WRITE_RETRIES) {
-                        logger.error("Cache insert failed: {}", e.getMessage());
-                        return;
-                    }
-                    try {
-                        Thread.sleep(80L * attempt);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                }
-            }
-        } finally {
-            cacheWriteLock.unlock();
-        }
-    }
-
-    private Connection openCacheConnection() throws SQLException {
-        Connection conn = DriverManager.getConnection("jdbc:sqlite:" + CACHE_DB);
-        try (Statement pragma = conn.createStatement()) {
-            pragma.execute("PRAGMA journal_mode=WAL");
-            pragma.execute("PRAGMA synchronous=NORMAL");
-            pragma.execute("PRAGMA busy_timeout=" + CACHE_BUSY_TIMEOUT_MS);
-        }
-        return conn;
-    }
-
-    private boolean isSqliteBusy(SQLException e) {
-        String msg = e.getMessage();
-        return msg != null && msg.toUpperCase(Locale.ROOT).contains("SQLITE_BUSY");
-    }
-
-    private int resolveParallelism() {
+    private static int resolveParallelismFromEnv() {
         String raw = System.getenv("DND_MAX_THREADS");
         if (raw == null || raw.isBlank()) {
             return DEFAULT_MAX_THREADS;
@@ -310,7 +196,7 @@ public class TranslatorService {
                 return DEFAULT_MAX_THREADS;
             }
             return configured;
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException ignored) {
             return DEFAULT_MAX_THREADS;
         }
     }
