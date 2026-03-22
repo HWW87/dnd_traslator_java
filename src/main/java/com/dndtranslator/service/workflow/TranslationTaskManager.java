@@ -8,6 +8,7 @@ public class TranslationTaskManager {
 
     private final AtomicBoolean paused = new AtomicBoolean(false);
     private final AtomicBoolean stopped = new AtomicBoolean(false);
+    private final AtomicBoolean exportPartialOnStop = new AtomicBoolean(false);
     private volatile Task<TranslationResult> currentTask;
 
     public Task<TranslationResult> start(
@@ -41,6 +42,11 @@ public class TranslationTaskManager {
                     public boolean isStopped() {
                         return stopped.get() || isCancelled() || Thread.currentThread().isInterrupted();
                     }
+
+                    @Override
+                    public boolean shouldExportPartialOnStop() {
+                        return exportPartialOnStop.get();
+                    }
                 };
 
                 return coordinator.execute(request, managedListener);
@@ -60,18 +66,25 @@ public class TranslationTaskManager {
         return next;
     }
 
-    public void requestStop() {
+    public void requestStop(boolean exportPartial) {
         stopped.set(true);
+        exportPartialOnStop.set(exportPartial);
         paused.set(false);
         Task<TranslationResult> task = currentTask;
-        if (task != null) {
+        // Si se pide volcado parcial, dejamos que el workflow cierre de forma ordenada.
+        if (!exportPartial && task != null) {
             task.cancel(true);
         }
+    }
+
+    public void requestStop() {
+        requestStop(false);
     }
 
     public void resetControlFlags() {
         paused.set(false);
         stopped.set(false);
+        exportPartialOnStop.set(false);
     }
 
     public boolean isPaused() {

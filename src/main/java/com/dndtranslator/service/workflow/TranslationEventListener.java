@@ -18,4 +18,8 @@ public interface TranslationEventListener {
     default boolean isStopped() {
         return false;
     }
+
+    default boolean shouldExportPartialOnStop() {
+        return false;
+    }
 }

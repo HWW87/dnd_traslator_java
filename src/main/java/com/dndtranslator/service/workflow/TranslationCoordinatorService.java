@@ -8,6 +8,11 @@ import com.dndtranslator.service.PdfToParagraphService;
 import com.dndtranslator.service.TranslatorService;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
@@ -147,7 +152,26 @@ public class TranslationCoordinatorService {
 
         listener.onLog("📄 Parrafos detectados: " + total);
 
-        translateParagraphs(paragraphs, targetLanguage, listener);
+        try {
+            translateParagraphs(paragraphs, targetLanguage, listener);
+        } catch (CancellationException stop) {
+            if (!listener.shouldExportPartialOnStop()) {
+                throw stop;
+            }
+
+            int translatedCount = countTranslatedParagraphs(paragraphs);
+            if (translatedCount == 0) {
+                listener.onLog("⏹️ Detenido por el usuario. No hay parrafos traducidos para exportar.");
+                throw stop;
+            }
+
+            listener.onLog("⏹️ Detencion solicitada. Exportando avance parcial...");
+            pdfRebuilderGateway.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
+
+            String outputPath = moveOutputToPartialPath(pdfFile.getAbsolutePath());
+            listener.onLog("✅ PDF parcial generado con " + translatedCount + " parrafos traducidos.");
+            return new TranslationResult(outputPath, translatedCount, extraction.usedOcrFallback());
+        }
 
         checkStopRequested(listener);
         listener.onLog("🧾 Reconstruyendo PDF con layout original...");
@@ -218,6 +242,38 @@ public class TranslationCoordinatorService {
             return originalPath.substring(0, originalPath.length() - 4) + "_translated_layout.pdf";
         }
         return originalPath + "_translated_layout.pdf";
+    }
+
+    private String buildPartialOutputPath(String originalPath) {
+        if (originalPath.toLowerCase().endsWith(".pdf")) {
+            return originalPath.substring(0, originalPath.length() - 4) + "_translated_layout_partial.pdf";
+        }
+        return originalPath + "_translated_layout_partial.pdf";
+    }
+
+    private String moveOutputToPartialPath(String originalPath) throws IOException {
+        String fullOutputPath = buildOutputPath(originalPath);
+        String partialOutputPath = buildPartialOutputPath(originalPath);
+
+        Path fullOutput = Paths.get(fullOutputPath);
+        Path partialOutput = Paths.get(partialOutputPath);
+
+        if (Files.exists(fullOutput) && !fullOutput.equals(partialOutput)) {
+            Files.move(fullOutput, partialOutput, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        return partialOutputPath;
+    }
+
+    private int countTranslatedParagraphs(List<Paragraph> paragraphs) {
+        int count = 0;
+        for (Paragraph paragraph : paragraphs) {
+            String translated = paragraph.getTranslatedText();
+            if (translated != null && !translated.isBlank()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public void shutdown() {

@@ -1,6 +1,8 @@
 package com.dndtranslator.service;
 
 import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.dndtranslator.model.TextBlock;
 
 import java.io.IOException;
@@ -22,6 +24,8 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class TranslatorService {
 
+    private static final Logger logger = LoggerFactory.getLogger(TranslatorService.class);
+
     private static final String PRIMARY_MODEL = "gemma3:1b";
     private static final String FALLBACK_MODEL = "llama3.2:1b-instruct";
     private static final String OLLAMA_URL = "http://localhost:11434/api/generate";
@@ -38,7 +42,7 @@ public class TranslatorService {
 
     public TranslatorService() {
         initCache();
-        System.out.println("[TranslatorService] Hilos de traduccion configurados: " + maxThreads);
+        logger.info("TranslatorService iniciado con {} hilos de traduccion.", maxThreads);
     }
 
     // ===========================================================
@@ -61,7 +65,7 @@ public class TranslatorService {
                 results.add(f.get());
             } catch (Exception e) {
                 results.add("[Error al traducir bloque]");
-                System.err.println("⚠️ Error en bloque: " + e.getMessage());
+                logger.error("Error en bloque: {}", e.getMessage());
             }
         }
 
@@ -81,7 +85,7 @@ public class TranslatorService {
         // 🔸 Detección del modelo disponible
         String model = getAvailableModel();
         if (model == null) {
-            System.err.println("⚠️ Ningún modelo Ollama disponible. Ejecute 'ollama serve'.");
+            logger.warn("Ningun modelo Ollama disponible. Ejecute 'ollama serve'.");
             return "[Error: Ollama no disponible]";
         }
 
@@ -167,7 +171,7 @@ public class TranslatorService {
                 Thread.currentThread().interrupt();
                 return "";
             } catch (IOException e) {
-                System.err.println("⚠️ Intento " + attempt + " fallo: " + e.getMessage());
+                logger.warn("Intento {} fallo: {}", attempt, e.getMessage());
             }
         }
         return "[Error: segmento no traducido]";
@@ -232,7 +236,7 @@ public class TranslatorService {
                 )
             """);
         } catch (SQLException e) {
-            System.err.println("⚠️ Error creando cache DB: " + e.getMessage());
+            logger.error("Error creando cache DB: {}", e.getMessage());
         }
     }
 
@@ -264,7 +268,7 @@ public class TranslatorService {
                 } catch (SQLException e) {
                     boolean busy = isSqliteBusy(e);
                     if (!busy || attempt == CACHE_WRITE_RETRIES) {
-                        System.err.println("⚠️ Cache insert failed: " + e.getMessage());
+                        logger.error("Cache insert failed: {}", e.getMessage());
                         return;
                     }
                     try {
