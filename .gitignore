@@ -3,6 +3,7 @@
 
 # Local runtime data
 /translations.db
+/logs/
 
 # IDE local files
 /.idea/workspace.xml

@@ -11,6 +11,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
 public class OllamaClient {
@@ -87,6 +90,14 @@ public class OllamaClient {
         }
     }
 
+    public List<String> fetchAvailableModels() {
+        Optional<String> payload = fetchAvailableModelsPayload();
+        if (payload.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return parseAvailableModels(payload.get());
+    }
+
     private String parseResponse(String body) {
         if (body == null) {
             return "";
@@ -96,6 +107,30 @@ public class OllamaClient {
             return json.optString("response", "").trim();
         } catch (Exception ignored) {
             return body.trim();
+        }
+    }
+
+    private List<String> parseAvailableModels(String body) {
+        if (body == null || body.isBlank()) {
+            return Collections.emptyList();
+        }
+
+        try {
+            JSONObject json = new JSONObject(body);
+            List<String> names = new ArrayList<>();
+            for (Object rawModel : json.optJSONArray("models")) {
+                if (!(rawModel instanceof JSONObject modelObject)) {
+                    continue;
+                }
+                String name = modelObject.optString("name", modelObject.optString("model", "")).trim();
+                if (!name.isBlank()) {
+                    names.add(name);
+                }
+            }
+            return List.copyOf(names);
+        } catch (Exception e) {
+            logger.warn("No se pudo parsear la lista de modelos de Ollama: {}", e.getMessage());
+            return Collections.emptyList();
         }
     }
 

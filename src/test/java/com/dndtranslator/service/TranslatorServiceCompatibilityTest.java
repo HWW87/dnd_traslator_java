@@ -4,9 +4,8 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -18,13 +17,13 @@ import static org.mockito.Mockito.when;
 class TranslatorServiceCompatibilityTest {
 
     @Test
-    void returnsCachedTranslationWithoutCallingOllama() throws IOException, InterruptedException {
+    void returnsCachedTranslationWithoutCallingOllama() {
         OllamaClient ollamaClient = mock(OllamaClient.class);
         TranslationCacheRepository cacheRepository = mock(TranslationCacheRepository.class);
         TranslationSegmenter segmenter = mock(TranslationSegmenter.class);
         ModelResolver modelResolver = mock(ModelResolver.class);
 
-        when(cacheRepository.findTranslation("hello")).thenReturn(Optional.of("hola cache"));
+        when(cacheRepository.findTranslation("hello")).thenReturn(java.util.Optional.of("hola cache"));
 
         TranslatorService translatorService = new TranslatorService(
                 ollamaClient,
@@ -37,7 +36,7 @@ class TranslatorServiceCompatibilityTest {
         String translated = translatorService.translate("hello", "Spanish");
 
         assertEquals("hola cache", translated);
-        verify(ollamaClient, never()).fetchAvailableModelsPayload();
+        verify(ollamaClient, never()).fetchAvailableModels();
         translatorService.shutdown();
     }
 
@@ -48,8 +47,8 @@ class TranslatorServiceCompatibilityTest {
         TranslationSegmenter segmenter = mock(TranslationSegmenter.class);
         ModelResolver modelResolver = mock(ModelResolver.class);
 
-        when(cacheRepository.findTranslation(anyString())).thenReturn(Optional.empty());
-        when(ollamaClient.fetchAvailableModelsPayload()).thenReturn(Optional.empty());
+        when(cacheRepository.findTranslation(anyString())).thenReturn(java.util.Optional.empty());
+        when(ollamaClient.fetchAvailableModels()).thenReturn(List.of());
 
         TranslatorService translatorService = new TranslatorService(
                 ollamaClient,
@@ -72,12 +71,13 @@ class TranslatorServiceCompatibilityTest {
         TranslationSegmenter segmenter = mock(TranslationSegmenter.class);
         ModelResolver modelResolver = mock(ModelResolver.class);
 
-        when(cacheRepository.findTranslation(anyString())).thenReturn(Optional.empty());
-        when(ollamaClient.fetchAvailableModelsPayload()).thenReturn(Optional.of("{\"models\":[{\"name\":\"gemma3:1b\"}]}"));
-        when(modelResolver.resolveModel(anyString())).thenReturn("gemma3:1b");
+        when(cacheRepository.findTranslation(anyString())).thenReturn(java.util.Optional.empty());
+        when(ollamaClient.fetchAvailableModels()).thenReturn(List.of("translategemma:12b"));
+        when(modelResolver.resolveAvailableModel(anyList())).thenReturn("translategemma:12b");
+        when(modelResolver.resolveRetryModel(anyList(), eq("translategemma:12b"))).thenReturn("translategemma:12b");
         when(segmenter.segment("part1 part2")).thenReturn(List.of("part1", "part2"));
-        when(ollamaClient.translate(eq("gemma3:1b"), contains("part1"))).thenReturn("uno");
-        when(ollamaClient.translate(eq("gemma3:1b"), contains("part2"))).thenReturn("dos");
+        when(ollamaClient.translate(eq("translategemma:12b"), contains("part1"))).thenReturn("uno");
+        when(ollamaClient.translate(eq("translategemma:12b"), contains("part2"))).thenReturn("dos");
 
         TranslatorService translatorService = new TranslatorService(
                 ollamaClient,
@@ -90,7 +90,70 @@ class TranslatorServiceCompatibilityTest {
         String translated = translatorService.translate("part1 part2", "Spanish");
 
         assertEquals("uno\ndos", translated);
-        verify(cacheRepository).saveTranslation("part1 part2", "uno\ndos", "gemma3:1b");
+        verify(cacheRepository).saveTranslation("part1 part2", "uno\ndos", "translategemma:12b");
+        translatorService.shutdown();
+    }
+
+    @Test
+    void sanitizesModelOutputBeforeReturningAndCaching() throws IOException, InterruptedException {
+        OllamaClient ollamaClient = mock(OllamaClient.class);
+        TranslationCacheRepository cacheRepository = mock(TranslationCacheRepository.class);
+        TranslationSegmenter segmenter = mock(TranslationSegmenter.class);
+        ModelResolver modelResolver = mock(ModelResolver.class);
+
+        when(cacheRepository.findTranslation(anyString())).thenReturn(java.util.Optional.empty());
+        when(ollamaClient.fetchAvailableModels()).thenReturn(List.of("translategemma:12b"));
+        when(modelResolver.resolveAvailableModel(anyList())).thenReturn("translategemma:12b");
+        when(modelResolver.resolveRetryModel(anyList(), eq("translategemma:12b"))).thenReturn("translategemma:12b");
+        when(segmenter.segment("part1")).thenReturn(List.of("part1"));
+        when(ollamaClient.translate(eq("translategemma:12b"), contains("part1")))
+                .thenReturn("Aquí está la traducción:\nuno");
+
+        TranslatorService translatorService = new TranslatorService(
+                ollamaClient,
+                cacheRepository,
+                segmenter,
+                modelResolver,
+                1
+        );
+
+        String translated = translatorService.translate("part1", "Spanish");
+
+        assertEquals("uno", translated);
+        verify(cacheRepository).saveTranslation("part1", "uno", "translategemma:12b");
+        translatorService.shutdown();
+    }
+
+    @Test
+    void retriesWithFallbackModelWhenValidationFails() throws IOException, InterruptedException {
+        OllamaClient ollamaClient = mock(OllamaClient.class);
+        TranslationCacheRepository cacheRepository = mock(TranslationCacheRepository.class);
+        TranslationSegmenter segmenter = mock(TranslationSegmenter.class);
+        ModelResolver modelResolver = mock(ModelResolver.class);
+
+        when(cacheRepository.findTranslation(anyString())).thenReturn(java.util.Optional.empty());
+        when(ollamaClient.fetchAvailableModels()).thenReturn(List.of("translategemma:12b", "translategemma:4b"));
+        when(modelResolver.resolveAvailableModel(anyList())).thenReturn("translategemma:12b");
+        when(modelResolver.resolveRetryModel(anyList(), eq("translategemma:12b"))).thenReturn("translategemma:4b");
+        when(segmenter.segment("part1")).thenReturn(List.of("part1"));
+        when(ollamaClient.translate(eq("translategemma:12b"), contains("part1")))
+                .thenReturn("Lo siento, por favor proporcione el texto");
+        when(ollamaClient.translate(eq("translategemma:4b"), contains("part1")))
+                .thenReturn("uno");
+
+        TranslatorService translatorService = new TranslatorService(
+                ollamaClient,
+                cacheRepository,
+                segmenter,
+                modelResolver,
+                1
+        );
+
+        String translated = translatorService.translate("part1", "Spanish");
+
+        assertEquals("uno", translated);
+        verify(ollamaClient).translate(eq("translategemma:12b"), contains("part1"));
+        verify(ollamaClient).translate(eq("translategemma:4b"), contains("part1"));
         translatorService.shutdown();
     }
 }
