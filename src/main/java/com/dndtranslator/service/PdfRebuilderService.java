@@ -43,6 +43,9 @@ public class PdfRebuilderService {
     private final PdfImageExtractor imageExtractor;
     private final PageLayoutBuilder pageLayoutBuilder;
     private final TextLayoutEngine textLayoutEngine;
+    private final PageAnalyzer pageAnalyzer;
+    private final PageTypeClassifier pageTypeClassifier;
+    private final PageLayoutStrategyFactory pageLayoutStrategyFactory;
 
     public PdfRebuilderService() {
         this(new PdfImageExtractor(), new PageLayoutBuilder(), new TextLayoutEngine());
@@ -56,6 +59,9 @@ public class PdfRebuilderService {
         this.imageExtractor = imageExtractor;
         this.pageLayoutBuilder = pageLayoutBuilder;
         this.textLayoutEngine = textLayoutEngine;
+        this.pageAnalyzer = new PageAnalyzer();
+        this.pageTypeClassifier = new PageTypeClassifier();
+        this.pageLayoutStrategyFactory = new PageLayoutStrategyFactory(pageLayoutBuilder);
     }
 
     public void rebuild(String originalPath, List<Paragraph> paragraphs, Map<Integer, PageMeta> layoutInfo) throws IOException {
@@ -95,14 +101,29 @@ public class PdfRebuilderService {
 
                 try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
                     List<PdfImagePlacement> pageImages = imagesByPage.getOrDefault(pageNumber, List.of());
-                    PageLayout pageLayout = buildPageLayout(meta, pageImages);
+                    List<Paragraph> pageParagraphs = paragraphsByPage.getOrDefault(pageNumber, List.of());
+
+                    PageAnalysisData analysisData = pageAnalyzer.analyze(pageNumber, meta, pageImages, pageParagraphs);
+                    PageType pageType = pageTypeClassifier.classify(analysisData);
+                    PageLayoutStrategy strategy = pageLayoutStrategyFactory.getStrategy(pageType);
+                    PageRenderContext renderContext = new PageRenderContext(pageNumber, meta, pageImages, pageParagraphs, pageType);
+                    strategy.renderPage(renderContext);
+
+                    PageLayout pageLayout = ensureLayoutFallback(renderContext, meta, pageImages);
+                    logger.info(
+                            "Pagina {} detectada como {} -> estrategia {}",
+                            pageNumber,
+                            pageType,
+                            strategy.getClass().getSimpleName()
+                    );
+
                     drawImages(doc, cs, page.getMediaBox(), pageImages);
                     List<String> carryOver = overflowByPage.getOrDefault(pageNumber, List.of());
                     List<String> overflow = writeParagraphs(
                             cs,
                             font,
                             meta,
-                            paragraphsByPage.getOrDefault(pageNumber, List.of()),
+                            pageParagraphs,
                             pageLayout,
                             carryOver
                     );
@@ -158,6 +179,14 @@ public class PdfRebuilderService {
         }
         pageNumbers.addAll(imagesByPage.keySet());
         return pageNumbers;
+    }
+
+    private PageLayout ensureLayoutFallback(PageRenderContext context, PageMeta meta, List<PdfImagePlacement> pageImages) {
+        PageLayout strategyLayout = context.getPageLayout();
+        if (strategyLayout == null || strategyLayout.textBoxes() == null || strategyLayout.textBoxes().isEmpty()) {
+            return buildPageLayout(meta, pageImages);
+        }
+        return strategyLayout;
     }
 
     private PageLayout buildPageLayout(PageMeta meta, List<PdfImagePlacement> pageImages) {
