@@ -5,8 +5,25 @@ import com.dndtranslator.model.Paragraph;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public class PageAnalyzer {
+
+    private static final float DEFAULT_PAGE_WIDTH = 612f;
+    private static final float DEFAULT_PAGE_HEIGHT = 792f;
+    private static final float LARGE_IMAGE_MIN_RATIO = 0.30f;
+
+    private static final Set<String> MAP_KEYWORDS = Set.of(
+            "map", "quadrant", "sector", "base", "route", "region", "zone", "legend",
+            "area", "district", "outpost", "frontier", "colony", "grid", "coordinates",
+            "mapa", "cuadrante", "ruta", "región", "zona", "leyenda"
+    );
+
+    private static final Set<String> TITLE_KEYWORDS = Set.of(
+            "chapter", "capitulo", "capítulo", "cover", "titulo", "título", "edition", "volumen",
+            "volume", "book", "part", "section", "appendix", "introduction", "foreword",
+            "module", "scenario", "seccion", "sección", "apendice", "apéndice", "introduccion", "introducción"
+    );
 
     public PageAnalysisData analyze(
             int pageNumber,
@@ -14,13 +31,14 @@ public class PageAnalyzer {
             List<PdfImagePlacement> images,
             List<Paragraph> paragraphs
     ) {
-        float pageWidth = meta != null ? meta.getWidth() : 612f;
-        float pageHeight = meta != null ? meta.getHeight() : 792f;
+        float pageWidth = meta != null ? meta.getWidth() : DEFAULT_PAGE_WIDTH;
+        float pageHeight = meta != null ? meta.getHeight() : DEFAULT_PAGE_HEIGHT;
         float pageArea = Math.max(1f, pageWidth * pageHeight);
 
         int imageCount = 0;
         float imageArea = 0f;
         boolean hasLargeImage = false;
+
         if (images != null) {
             for (PdfImagePlacement image : images) {
                 if (image == null || !image.isRenderable()) {
@@ -29,12 +47,13 @@ public class PageAnalyzer {
                 imageCount++;
                 float currentArea = Math.max(0f, image.width() * image.height());
                 imageArea += currentArea;
-                if ((currentArea / pageArea) >= 0.30f) {
+                if ((currentArea / pageArea) >= LARGE_IMAGE_MIN_RATIO) {
                     hasLargeImage = true;
                 }
             }
         }
 
+        int textBlockCount = 0;
         int lineCount = 0;
         int shortLineCount = 0;
         int longLineCount = 0;
@@ -49,12 +68,15 @@ public class PageAnalyzer {
                 if (paragraph == null) {
                     continue;
                 }
+
                 String text = bestText(paragraph);
                 if (text.isBlank()) {
                     continue;
                 }
 
+                textBlockCount++;
                 lineCount++;
+
                 int words = countWords(text);
                 wordCount += words;
 
@@ -72,17 +94,16 @@ public class PageAnalyzer {
                 }
 
                 String normalized = text.toLowerCase(Locale.ROOT);
-                if (containsMapKeyword(normalized)) {
+                if (containsAnyKeyword(normalized, MAP_KEYWORDS)) {
                     mapKeywordHits++;
                 }
-                if (containsTitleKeyword(normalized)) {
+                if (containsAnyKeyword(normalized, TITLE_KEYWORDS)) {
                     titleKeywordHits++;
                 }
             }
         }
 
-        int textBlockCount = paragraphs != null ? paragraphs.size() : 0;
-        float imageRatio = clamp(imageArea / pageArea, 0f, 1.2f);
+        float imageRatio = clamp(imageArea / pageArea, 0f, 1f);
         boolean hasManyNumericLines = lineCount > 0 && numericLikeLines >= Math.max(3, lineCount / 3);
         boolean hasMapLikeKeywords = mapKeywordHits >= 2;
         boolean hasIndexLikePatterns = indexPatternHits >= 3 || (shortLineCount >= 8 && hasManyNumericLines);
@@ -110,11 +131,17 @@ public class PageAnalyzer {
     }
 
     private String bestText(Paragraph paragraph) {
+        String original = paragraph.getFullText();
+        if (original != null && !original.isBlank()) {
+            return normalize(original);
+        }
+
         String translated = paragraph.getTranslatedText();
         if (translated != null && !translated.isBlank()) {
             return normalize(translated);
         }
-        return normalize(paragraph.getFullText());
+
+        return "";
     }
 
     private String normalize(String text) {
@@ -150,28 +177,16 @@ public class PageAnalyzer {
                 || normalized.matches(".*\\s\\d{1,4}$");
     }
 
-    private boolean containsMapKeyword(String text) {
-        return text.contains("map")
-                || text.contains("quadrant")
-                || text.contains("sector")
-                || text.contains("base")
-                || text.contains("route")
-                || text.contains("region")
-                || text.contains("zone")
-                || text.contains("legend");
-    }
-
-    private boolean containsTitleKeyword(String text) {
-        return text.contains("chapter")
-                || text.contains("capitulo")
-                || text.contains("cover")
-                || text.contains("titulo")
-                || text.contains("edition")
-                || text.contains("volumen");
+    private boolean containsAnyKeyword(String text, Set<String> keywords) {
+        for (String keyword : keywords) {
+            if (text.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(value, max));
     }
 }
-

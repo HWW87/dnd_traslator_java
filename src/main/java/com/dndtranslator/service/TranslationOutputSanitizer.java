@@ -13,6 +13,7 @@ public class TranslationOutputSanitizer {
             "translation:",
             "traduccion:",
             "traducción:",
+            "traducción al español",
             "por favor, proporcione el texto",
             "por favor proporcione el texto",
             "no se proporciona texto para traducir",
@@ -24,8 +25,13 @@ public class TranslationOutputSanitizer {
             "as an ai",
             "como modelo de lenguaje",
             "here is the translation",
+            "here's the translated text",
+            "below is the translation",
             "please provide the text",
-            "no text was provided"
+            "no text was provided",
+            "spanish translation",
+            "output:",
+            "answer:"
     );
 
     private static final List<String> ASSISTANT_PREFACES = List.of(
@@ -36,12 +42,16 @@ public class TranslationOutputSanitizer {
             "respuesta:",
             "traduccion:",
             "traducción:",
+            "traducción al español:",
             "sure, here's",
             "sure, here is",
             "here is the translation:",
+            "here's the translated text:",
+            "below is the translation:",
             "aqui esta la traduccion:",
             "aquí está la traducción:",
-            "translated text:"
+            "translated text:",
+            "spanish translation:"
     );
 
     public String sanitize(String rawOutput) {
@@ -50,6 +60,7 @@ public class TranslationOutputSanitizer {
         }
 
         String sanitized = stripMarkdownFences(rawOutput);
+        sanitized = removeLeadingMetaLines(sanitized);
         sanitized = removeAssistantPrefaces(sanitized);
         sanitized = removeForbiddenPhrases(sanitized);
         sanitized = normalizeWhitespace(sanitized);
@@ -72,12 +83,14 @@ public class TranslationOutputSanitizer {
 
             String normalizedLine = normalizeComparable(trimmed);
             boolean dropLine = false;
+
             for (String phrase : FORBIDDEN_PHRASES) {
                 String normalizedPhrase = normalizeComparable(phrase);
                 if (normalizedLine.equals(normalizedPhrase)
                         || normalizedLine.startsWith(normalizedPhrase + ":")
                         || normalizedLine.startsWith(normalizedPhrase + " -")
-                        || (normalizedLine.contains(normalizedPhrase) && normalizedLine.length() <= normalizedPhrase.length() + 24)) {
+                        || (normalizedLine.contains(normalizedPhrase)
+                        && normalizedLine.length() <= normalizedPhrase.length() + 24)) {
                     dropLine = true;
                     break;
                 }
@@ -90,7 +103,7 @@ public class TranslationOutputSanitizer {
 
         String result = String.join("\n", keptLines);
         for (String phrase : FORBIDDEN_PHRASES) {
-            result = stripLeadingPhrase(result, phrase);
+            result = stripLeadingPhraseLoosely(result, phrase);
         }
         return result;
     }
@@ -130,13 +143,13 @@ public class TranslationOutputSanitizer {
 
         String sanitized = text.trim();
         boolean changed;
+
         do {
             changed = false;
-            String normalized = normalizeComparable(sanitized);
             for (String preface : ASSISTANT_PREFACES) {
-                String normalizedPreface = normalizeComparable(preface);
-                if (normalized.startsWith(normalizedPreface)) {
-                    sanitized = sanitized.substring(Math.min(sanitized.length(), preface.length())).trim();
+                int cutIndex = findLoosePrefixCutIndex(sanitized, preface);
+                if (cutIndex >= 0) {
+                    sanitized = sanitized.substring(cutIndex).replaceFirst("^[\\s:;,.!¿?\\-]+", "").trim();
                     changed = true;
                     break;
                 }
@@ -146,19 +159,80 @@ public class TranslationOutputSanitizer {
         return sanitized;
     }
 
-    private String stripLeadingPhrase(String text, String phrase) {
-        String result = text == null ? "" : text.trim();
-        String normalizedPhrase = normalizeComparable(phrase);
+    private String removeLeadingMetaLines(String text) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\\r?\\n")));
+        int start = 0;
 
-        while (!result.isBlank()) {
-            String normalized = normalizeComparable(result);
-            if (!normalized.startsWith(normalizedPhrase)) {
+        while (start < lines.size()) {
+            String trimmed = lines.get(start).trim();
+            if (trimmed.isEmpty()) {
+                start++;
+                continue;
+            }
+
+            String normalized = normalizeComparable(trimmed);
+            boolean meta = false;
+
+            for (String phrase : FORBIDDEN_PHRASES) {
+                String normalizedPhrase = normalizeComparable(phrase);
+                if (normalized.equals(normalizedPhrase)
+                        || normalized.startsWith(normalizedPhrase + ":")
+                        || normalized.startsWith(normalizedPhrase + " -")) {
+                    meta = true;
+                    break;
+                }
+            }
+
+            if (!meta) {
                 break;
             }
-            int cutIndex = Math.min(result.length(), phrase.length());
+            start++;
+        }
+
+        return String.join("\n", lines.subList(start, lines.size()));
+    }
+
+    private String stripLeadingPhraseLoosely(String text, String phrase) {
+        String result = text == null ? "" : text.trim();
+
+        while (!result.isBlank()) {
+            int cutIndex = findLoosePrefixCutIndex(result, phrase);
+            if (cutIndex < 0) {
+                break;
+            }
             result = result.substring(cutIndex).replaceFirst("^[\\s:;,.!¿?\\-]+", "").trim();
         }
+
         return result;
+    }
+
+    private int findLoosePrefixCutIndex(String text, String phrase) {
+        if (text == null || text.isBlank() || phrase == null || phrase.isBlank()) {
+            return -1;
+        }
+
+        String normalizedText = normalizeComparable(text);
+        String normalizedPhrase = normalizeComparable(phrase);
+
+        if (!normalizedText.startsWith(normalizedPhrase)) {
+            return -1;
+        }
+
+        int consumed = 0;
+        int matched = 0;
+        String original = text.trim();
+
+        while (consumed < original.length() && matched < normalizedPhrase.length()) {
+            char c = original.charAt(consumed);
+            String normalizedChar = normalizeComparable(String.valueOf(c));
+
+            if (!normalizedChar.isEmpty()) {
+                matched += normalizedChar.length();
+            }
+            consumed++;
+        }
+
+        return Math.min(consumed, original.length());
     }
 
     private boolean isAlmostEmpty(String text) {
@@ -170,11 +244,14 @@ public class TranslationOutputSanitizer {
     }
 
     private String normalizeComparable(String value) {
-        String normalized = Normalizer.normalize(value, Normalizer.Form.NFD)
+        if (value == null) {
+            return "";
+        }
+
+        return Normalizer.normalize(value, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "")
                 .toLowerCase(Locale.ROOT)
+                .replaceAll("\\s+", " ")
                 .trim();
-        return normalized.replaceAll("\\s+", " ");
     }
 }
-

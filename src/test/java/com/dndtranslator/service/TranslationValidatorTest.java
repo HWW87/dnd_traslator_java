@@ -56,5 +56,23 @@ class TranslationValidatorTest {
         assertFalse(result.valid());
         assertTrue(result.shouldRetry());
     }
+
+    @Test
+    void doesNotTreatBlankAsForbiddenPatternByItself() {
+        assertFalse(validator.containsForbiddenPatterns(null));
+        assertFalse(validator.containsForbiddenPatterns("   "));
+    }
+
+    @Test
+    void warnsWhenSpanishSignalIsWeakButDoesNotBlock() {
+        TranslationValidationResult result = validator.validate(
+                "attack damage roll check bonus value target armor class",
+                "attack damage roll check bonus value target armor class"
+        );
+
+        assertTrue(result.valid());
+        assertFalse(result.shouldRetry());
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("weak Spanish signal")));
+    }
 }
 

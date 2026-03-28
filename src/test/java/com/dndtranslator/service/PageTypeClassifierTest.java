@@ -65,6 +65,20 @@ class PageTypeClassifierTest {
     }
 
     @Test
+    void classifiesTitleOrCoverForZeroBasedFirstPage() {
+        PageAnalysisData data = baseDataBuilder()
+                .pageNumber(0)
+                .wordCount(16)
+                .lineCount(3)
+                .estimatedImageAreaRatio(0.50f)
+                .hasLargeImage(true)
+                .hasVeryLowTextDensity(true)
+                .build();
+
+        assertEquals(PageType.TITLE_OR_COVER, classifier.classify(data));
+    }
+
+    @Test
     void classifiesImageHeavyPage() {
         PageAnalysisData data = baseDataBuilder()
                 .wordCount(45)

@@ -12,6 +12,8 @@ public class PageRenderContext {
     private final List<PdfImagePlacement> pageImages;
     private final List<Paragraph> paragraphs;
     private final PageType pageType;
+    private final PageAnalysisData analysisData;
+
     private PageLayout pageLayout;
 
     public PageRenderContext(
@@ -19,13 +21,15 @@ public class PageRenderContext {
             PageMeta pageMeta,
             List<PdfImagePlacement> pageImages,
             List<Paragraph> paragraphs,
-            PageType pageType
+            PageType pageType,
+            PageAnalysisData analysisData
     ) {
         this.pageNumber = pageNumber;
         this.pageMeta = pageMeta;
-        this.pageImages = pageImages;
-        this.paragraphs = paragraphs;
+        this.pageImages = pageImages == null ? List.of() : List.copyOf(pageImages);
+        this.paragraphs = paragraphs == null ? List.of() : List.copyOf(paragraphs);
         this.pageType = pageType;
+        this.analysisData = analysisData;
     }
 
     public int getPageNumber() {
@@ -48,6 +52,10 @@ public class PageRenderContext {
         return pageType;
     }
 
+    public PageAnalysisData getAnalysisData() {
+        return analysisData;
+    }
+
     public PageLayout getPageLayout() {
         return pageLayout;
     }
@@ -55,5 +63,16 @@ public class PageRenderContext {
     public void setPageLayout(PageLayout pageLayout) {
         this.pageLayout = pageLayout;
     }
-}
 
+    public boolean hasImages() {
+        return !pageImages.isEmpty();
+    }
+
+    public boolean hasParagraphs() {
+        return !paragraphs.isEmpty();
+    }
+
+    public boolean isEmptyPage() {
+        return pageImages.isEmpty() && paragraphs.isEmpty();
+    }
+}
