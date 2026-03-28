@@ -17,6 +17,8 @@ public class TranslationValidator {
     private static final double ENGLISH_RESIDUAL_WARNING = 0.18d;
     private static final double ENGLISH_RESIDUAL_BLOCKING = 0.35d;
 
+    private static final int LANGUAGE_SIGNAL_MIN_WORDS = 8;
+    private static final double SPANISH_SIGNAL_BLOCKING = 0.02d;
     private static final double SPANISH_SIGNAL_WARNING = 0.04d;
     private static final double GARBAGE_SYMBOL_RATIO = 0.35d;
 
@@ -78,7 +80,7 @@ public class TranslationValidator {
         boolean shouldRetry = false;
         double confidence = 1.0d;
 
-        if (translatedText == null || translatedText.isBlank()) {
+        if (isBlankTranslation(translatedText)) {
             issues.add("BLOCKING: translated text is empty");
             return new TranslationValidationResult(false, true, List.copyOf(issues), 0.0d);
         }
@@ -127,7 +129,14 @@ public class TranslationValidator {
         }
 
         double spanishSignal = spanishSignalRatio(translatedText);
-        if (countWords(translatedText) >= 8 && spanishSignal < SPANISH_SIGNAL_WARNING) {
+        int translatedWords = countWords(translatedText);
+        if (translatedWords >= LANGUAGE_SIGNAL_MIN_WORDS && spanishSignal < SPANISH_SIGNAL_BLOCKING
+                && englishResidual >= ENGLISH_RESIDUAL_BLOCKING) {
+            issues.add(String.format(Locale.ROOT, "BLOCKING: weak Spanish signal %.2f with high English residual %.2f", spanishSignal, englishResidual));
+            blocking = true;
+            shouldRetry = true;
+            confidence -= 0.20d;
+        } else if (translatedWords >= LANGUAGE_SIGNAL_MIN_WORDS && spanishSignal < SPANISH_SIGNAL_WARNING) {
             issues.add(String.format(Locale.ROOT, "WARNING: weak Spanish signal %.2f", spanishSignal));
             confidence -= 0.07d;
         }
@@ -220,6 +229,10 @@ public class TranslationValidator {
 
     private boolean containsMarkdownFences(String text) {
         return text != null && MARKDOWN_FENCE_PATTERN.matcher(text).find();
+    }
+
+    private boolean isBlankTranslation(String text) {
+        return text == null || text.isBlank();
     }
 
     private double lengthRatio(String originalText, String translatedText) {
