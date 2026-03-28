@@ -30,6 +30,7 @@ public class TranslatorService {
     private final ModelResolver modelResolver;
     private final TranslationOutputSanitizer outputSanitizer;
     private final TranslationValidator translationValidator;
+    private final PromptBuilder promptBuilder;
 
     public TranslatorService() {
         this(
@@ -39,6 +40,7 @@ public class TranslatorService {
                 new ModelResolver(),
                 new TranslationOutputSanitizer(),
                 new TranslationValidator(),
+                new PromptBuilder(),
                 SINGLE_THREAD
         );
     }
@@ -75,6 +77,7 @@ public class TranslatorService {
                 modelResolver,
                 outputSanitizer,
                 translationValidator,
+                new PromptBuilder(),
                 SINGLE_THREAD
         );
     }
@@ -88,12 +91,35 @@ public class TranslatorService {
             TranslationValidator translationValidator,
             int maxThreads
     ) {
+        this(
+                ollamaClient,
+                cacheRepository,
+                segmenter,
+                modelResolver,
+                outputSanitizer,
+                translationValidator,
+                new PromptBuilder(),
+                maxThreads
+        );
+    }
+
+    TranslatorService(
+            OllamaClient ollamaClient,
+            TranslationCacheRepository cacheRepository,
+            TranslationSegmenter segmenter,
+            ModelResolver modelResolver,
+            TranslationOutputSanitizer outputSanitizer,
+            TranslationValidator translationValidator,
+            PromptBuilder promptBuilder,
+            int maxThreads
+    ) {
         this.ollamaClient = ollamaClient;
         this.cacheRepository = cacheRepository;
         this.segmenter = segmenter;
         this.modelResolver = modelResolver;
         this.outputSanitizer = outputSanitizer;
         this.translationValidator = translationValidator;
+        this.promptBuilder = promptBuilder;
         this.maxThreads = SINGLE_THREAD;
         if (maxThreads > SINGLE_THREAD) {
             logger.info("Se solicito concurrencia ({} hilos), pero se fuerza modo secuencial de 1 hilo.", maxThreads);
@@ -115,6 +141,7 @@ public class TranslatorService {
                 modelResolver,
                 new TranslationOutputSanitizer(),
                 new TranslationValidator(),
+                new PromptBuilder(),
                 maxThreads
         );
     }
@@ -205,7 +232,10 @@ public class TranslatorService {
 
         for (int attempt = 1; attempt <= RETRY_COUNT; attempt++) {
             try {
-                String rawResponse = ollamaClient.translate(currentModel, buildPrompt(text, targetLanguage, attempt > 1));
+                String prompt = attempt > 1
+                        ? promptBuilder.buildRetryPrompt(text, targetLanguage)
+                        : promptBuilder.buildTranslationPrompt(text, targetLanguage);
+                String rawResponse = ollamaClient.translate(currentModel, prompt);
                 String sanitized = outputSanitizer.sanitize(rawResponse);
                 TranslationValidationResult validation = translationValidator.validate(text, sanitized);
 
@@ -263,23 +293,6 @@ public class TranslatorService {
         return modelResolver.resolveAvailableModel(availableModels);
     }
 
-    private String buildPrompt(String text, String targetLanguage, boolean retryAttempt) {
-        return String.format("""
-                Translate the following text *directly* to %s.
-                Rules:
-                - Do NOT include explanations, notes, or introductions.
-                - Preserve proper names and RPG terminology.
-                - Maintain line breaks and paragraph structure.
-                - Output ONLY the translated text.
-                %s
-
-                %s
-                """, targetLanguage,
-                retryAttempt
-                        ? "- DO NOT add markdown fences, apologies, or assistant-style prefacing."
-                        : "",
-                text);
-    }
 
     private String cleanFinalTranslation(String text) {
         return text == null ? "" : text.trim();
