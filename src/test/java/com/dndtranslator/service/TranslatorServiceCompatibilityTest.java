@@ -1,5 +1,6 @@
 package com.dndtranslator.service;
 
+import com.dndtranslator.model.TextBlock;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -162,6 +163,58 @@ class TranslatorServiceCompatibilityTest {
         assertEquals("uno", translated);
         verify(ollamaClient).translate(eq("translategemma:12b"), contains("part1"));
         verify(ollamaClient).translate(eq("translategemma:4b"), contains("part1"));
+        translatorService.shutdown();
+    }
+
+    @Test
+    void translateBlocksFallsBackToOriginalTextWhenTranslateReturnsVisibleErrorMarker() {
+        OllamaClient ollamaClient = mock(OllamaClient.class);
+        TranslationCacheRepository cacheRepository = mock(TranslationCacheRepository.class);
+        TranslationSegmenter segmenter = mock(TranslationSegmenter.class);
+        ModelResolver modelResolver = mock(ModelResolver.class);
+
+        when(cacheRepository.findTranslation(any(TranslationCacheKey.class))).thenReturn(java.util.Optional.empty());
+        when(ollamaClient.fetchAvailableModels()).thenReturn(List.of());
+
+        TranslatorService translatorService = new TranslatorService(
+                ollamaClient,
+                cacheRepository,
+                segmenter,
+                modelResolver,
+                1
+        );
+
+        List<String> translated = translatorService.translateBlocks(List.of(
+                new TextBlock("hello", 1, 10f, 10f, 100f, 20f, 10f, "Font")
+        ));
+
+        assertEquals(List.of("hello"), translated);
+        translatorService.shutdown();
+    }
+
+    @Test
+    void translateBlocksFallsBackToEmptyWhenBlockIsNullAndTranslationThrows() {
+        OllamaClient ollamaClient = mock(OllamaClient.class);
+        TranslationCacheRepository cacheRepository = mock(TranslationCacheRepository.class);
+        TranslationSegmenter segmenter = mock(TranslationSegmenter.class);
+        ModelResolver modelResolver = mock(ModelResolver.class);
+
+        when(cacheRepository.findTranslation(any(TranslationCacheKey.class))).thenReturn(java.util.Optional.empty());
+        when(ollamaClient.fetchAvailableModels()).thenThrow(new RuntimeException("boom"));
+
+        TranslatorService translatorService = new TranslatorService(
+                ollamaClient,
+                cacheRepository,
+                segmenter,
+                modelResolver,
+                1
+        );
+
+        List<String> translated = translatorService.translateBlocks(List.of(
+                new TextBlock(null, 1, 10f, 10f, 100f, 20f, 10f, "Font")
+        ));
+
+        assertEquals(List.of(""), translated);
         translatorService.shutdown();
     }
 }

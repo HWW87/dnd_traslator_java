@@ -163,14 +163,35 @@ public class TranslatorService {
 
         for (TextBlock block : blocks) {
             try {
-                results.add(translate(block.getText(), "Spanish"));
+                String translated = translate(block.getText(), "Spanish");
+                if (isVisibleErrorMarker(translated)) {
+                    results.add(resolveBlockFallback(block));
+                    logger.warn("Fallback en bloque {} por salida de error visible.", block == null ? -1 : block.getPage());
+                    continue;
+                }
+                results.add(translated);
             } catch (Exception e) {
-                results.add("[Error al traducir bloque]");
-                logger.error("Error en bloque: {}", e.getMessage());
+                results.add(resolveBlockFallback(block));
+                logger.error("Error en bloque {}: {}", block == null ? -1 : block.getPage(), e.getMessage());
             }
         }
 
         return results;
+    }
+
+    private String resolveBlockFallback(TextBlock block) {
+        if (block == null || block.getText() == null) {
+            return "";
+        }
+        return block.getText();
+    }
+
+    private boolean isVisibleErrorMarker(String text) {
+        if (text == null) {
+            return false;
+        }
+        String normalized = text.trim().toLowerCase();
+        return normalized.startsWith("[error:") || normalized.startsWith("[error al traducir");
     }
 
     // ===========================================================
