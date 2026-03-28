@@ -4,6 +4,7 @@ import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 public class TranslationOutputSanitizer {
 
@@ -86,11 +87,7 @@ public class TranslationOutputSanitizer {
 
             for (String phrase : FORBIDDEN_PHRASES) {
                 String normalizedPhrase = normalizeComparable(phrase);
-                if (normalizedLine.equals(normalizedPhrase)
-                        || normalizedLine.startsWith(normalizedPhrase + ":")
-                        || normalizedLine.startsWith(normalizedPhrase + " -")
-                        || (normalizedLine.contains(normalizedPhrase)
-                        && normalizedLine.length() <= normalizedPhrase.length() + 24)) {
+                if (isMetaLine(normalizedLine, normalizedPhrase)) {
                     dropLine = true;
                     break;
                 }
@@ -175,9 +172,7 @@ public class TranslationOutputSanitizer {
 
             for (String phrase : FORBIDDEN_PHRASES) {
                 String normalizedPhrase = normalizeComparable(phrase);
-                if (normalized.equals(normalizedPhrase)
-                        || normalized.startsWith(normalizedPhrase + ":")
-                        || normalized.startsWith(normalizedPhrase + " -")) {
+                if (isMetaLine(normalized, normalizedPhrase)) {
                     meta = true;
                     break;
                 }
@@ -211,28 +206,90 @@ public class TranslationOutputSanitizer {
             return -1;
         }
 
-        String normalizedText = normalizeComparable(text);
-        String normalizedPhrase = normalizeComparable(phrase);
-
-        if (!normalizedText.startsWith(normalizedPhrase)) {
+        List<String> phraseTokens = tokenizeComparableWords(phrase);
+        if (phraseTokens.isEmpty()) {
             return -1;
         }
 
-        int consumed = 0;
-        int matched = 0;
-        String original = text.trim();
-
-        while (consumed < original.length() && matched < normalizedPhrase.length()) {
-            char c = original.charAt(consumed);
-            String normalizedChar = normalizeComparable(String.valueOf(c));
-
-            if (!normalizedChar.isEmpty()) {
-                matched += normalizedChar.length();
-            }
-            consumed++;
+        List<TokenSpan> textTokens = tokenizeWithSpans(text);
+        if (textTokens.size() < phraseTokens.size()) {
+            return -1;
         }
 
-        return Math.min(consumed, original.length());
+        for (int i = 0; i < phraseTokens.size(); i++) {
+            if (!Objects.equals(textTokens.get(i).normalized(), phraseTokens.get(i))) {
+                return -1;
+            }
+        }
+
+        int cutIndex = textTokens.get(phraseTokens.size() - 1).endExclusive();
+        while (cutIndex < text.length()) {
+            int codePoint = text.codePointAt(cutIndex);
+            if (Character.isLetterOrDigit(codePoint)) {
+                break;
+            }
+            cutIndex += Character.charCount(codePoint);
+        }
+
+        return cutIndex;
+    }
+
+    private boolean isMetaLine(String normalizedLine, String normalizedPhrase) {
+        return normalizedLine.equals(normalizedPhrase)
+                || normalizedLine.startsWith(normalizedPhrase + ":")
+                || normalizedLine.startsWith(normalizedPhrase + " -");
+    }
+
+    private List<String> tokenizeComparableWords(String value) {
+        String normalized = normalizeComparable(value);
+        if (normalized.isBlank()) {
+            return List.of();
+        }
+
+        List<String> tokens = new ArrayList<>();
+        for (String token : normalized.split("[^\\p{IsAlphabetic}\\p{IsDigit}]+")) {
+            if (!token.isBlank()) {
+                tokens.add(token);
+            }
+        }
+        return tokens;
+    }
+
+    private List<TokenSpan> tokenizeWithSpans(String text) {
+        List<TokenSpan> tokens = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return tokens;
+        }
+
+        int index = 0;
+        while (index < text.length()) {
+            int codePoint = text.codePointAt(index);
+            if (!Character.isLetterOrDigit(codePoint)) {
+                index += Character.charCount(codePoint);
+                continue;
+            }
+
+            int start = index;
+            StringBuilder rawToken = new StringBuilder();
+            while (index < text.length()) {
+                int innerCodePoint = text.codePointAt(index);
+                if (!Character.isLetterOrDigit(innerCodePoint)) {
+                    break;
+                }
+                rawToken.appendCodePoint(innerCodePoint);
+                index += Character.charCount(innerCodePoint);
+            }
+
+            String normalizedToken = normalizeComparable(rawToken.toString());
+            if (!normalizedToken.isBlank()) {
+                tokens.add(new TokenSpan(normalizedToken, start, index));
+            }
+        }
+
+        return tokens;
+    }
+
+    private record TokenSpan(String normalized, int startInclusive, int endExclusive) {
     }
 
     private boolean isAlmostEmpty(String text) {
