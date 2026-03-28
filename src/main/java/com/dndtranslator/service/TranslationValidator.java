@@ -13,8 +13,11 @@ public class TranslationValidator {
     private static final double MAX_LENGTH_RATIO_WARNING = 2.5d;
     private static final double MIN_LENGTH_RATIO_BLOCKING = 0.15d;
     private static final double MAX_LENGTH_RATIO_BLOCKING = 3.0d;
+
     private static final double ENGLISH_RESIDUAL_WARNING = 0.18d;
     private static final double ENGLISH_RESIDUAL_BLOCKING = 0.35d;
+
+    private static final double SPANISH_SIGNAL_WARNING = 0.04d;
     private static final double GARBAGE_SYMBOL_RATIO = 0.35d;
 
     private static final Pattern REPEATED_CHAR_PATTERN = Pattern.compile("(.)\\1{5,}");
@@ -51,12 +54,18 @@ public class TranslationValidator {
             "sorry", "provide", "result", "response", "of", "to", "in", "on"
     );
 
+    private static final Set<String> SPANISH_SIGNAL_WORDS = Set.of(
+            "de", "la", "el", "y", "en", "con", "para", "los", "las", "del",
+            "una", "un", "por", "que", "se", "al"
+    );
+
     private static final List<String> HALLUCINATION_MARKERS = List.of(
             "en resumen",
             "si necesitas",
             "puedo ayudarte",
             "como asistente",
             "es importante mencionar",
+            "dejame saber",
             "déjame saber",
             "let me know",
             "i can help",
@@ -71,7 +80,7 @@ public class TranslationValidator {
 
         if (translatedText == null || translatedText.isBlank()) {
             issues.add("BLOCKING: translated text is empty");
-            return new TranslationValidationResult(false, true, issues, 0.0d);
+            return new TranslationValidationResult(false, true, List.copyOf(issues), 0.0d);
         }
 
         if (containsForbiddenPatterns(translatedText)) {
@@ -117,6 +126,12 @@ public class TranslationValidator {
             confidence -= 0.08d;
         }
 
+        double spanishSignal = spanishSignalRatio(translatedText);
+        if (countWords(translatedText) >= 8 && spanishSignal < SPANISH_SIGNAL_WARNING) {
+            issues.add(String.format(Locale.ROOT, "WARNING: weak Spanish signal %.2f", spanishSignal));
+            confidence -= 0.07d;
+        }
+
         if (looksHallucinatory(originalText, translatedText)) {
             issues.add("BLOCKING: hallucination heuristic triggered");
             blocking = true;
@@ -124,14 +139,14 @@ public class TranslationValidator {
             confidence -= 0.25d;
         }
 
-        confidence = Math.max(0.0d, Math.min(1.0d, confidence));
+        confidence = clamp(confidence, 0.0d, 1.0d);
         boolean valid = !blocking;
         return new TranslationValidationResult(valid, shouldRetry, List.copyOf(issues), confidence);
     }
 
     public boolean containsForbiddenPatterns(String text) {
         if (text == null || text.isBlank()) {
-            return true;
+            return false;
         }
 
         String comparable = normalizeComparable(text);
@@ -167,7 +182,9 @@ public class TranslationValidator {
 
         long lettersDigits = text.chars().filter(Character::isLetterOrDigit).count();
         long suspiciousSymbols = text.chars()
-                .filter(ch -> !Character.isLetterOrDigit(ch) && !Character.isWhitespace(ch) && ",.;:!?¡¿()[]{}'\"-_/".indexOf(ch) < 0)
+                .filter(ch -> !Character.isLetterOrDigit(ch)
+                        && !Character.isWhitespace(ch)
+                        && ",.;:!?¡¿()[]{}'\"-_/".indexOf(ch) < 0)
                 .count();
 
         if (lettersDigits == 0) {
@@ -191,7 +208,9 @@ public class TranslationValidator {
 
         int originalWords = countWords(originalText);
         int translatedWords = countWords(translatedText);
-        long sentenceCount = translatedText.chars().filter(ch -> ch == '.' || ch == '!' || ch == '?').count();
+        long sentenceCount = translatedText.chars()
+                .filter(ch -> ch == '.' || ch == '!' || ch == '?')
+                .count();
 
         return originalWords > 0
                 && originalWords <= 12
@@ -206,6 +225,7 @@ public class TranslationValidator {
     private double lengthRatio(String originalText, String translatedText) {
         int originalLength = effectiveLength(originalText);
         int translatedLength = effectiveLength(translatedText);
+
         if (originalLength == 0) {
             return translatedLength == 0 ? 1.0d : 10.0d;
         }
@@ -220,27 +240,36 @@ public class TranslationValidator {
     }
 
     private double englishResidualRatio(String text) {
+        return tokenMatchRatio(text, ENGLISH_STOPWORDS);
+    }
+
+    private double spanishSignalRatio(String text) {
+        return tokenMatchRatio(text, SPANISH_SIGNAL_WORDS);
+    }
+
+    private double tokenMatchRatio(String text, Set<String> dictionary) {
         if (text == null || text.isBlank()) {
             return 0.0d;
         }
 
         String[] tokens = normalizeComparable(text).split("[^a-z]+");
         int total = 0;
-        int english = 0;
+        int matches = 0;
+
         for (String token : tokens) {
             if (token.isBlank()) {
                 continue;
             }
             total++;
-            if (ENGLISH_STOPWORDS.contains(token)) {
-                english++;
+            if (dictionary.contains(token)) {
+                matches++;
             }
         }
 
         if (total == 0) {
             return 0.0d;
         }
-        return (double) english / (double) total;
+        return (double) matches / (double) total;
     }
 
     private int countWords(String text) {
@@ -251,11 +280,18 @@ public class TranslationValidator {
     }
 
     private String normalizeComparable(String value) {
+        if (value == null) {
+            return "";
+        }
+
         return Normalizer.normalize(value, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "")
                 .toLowerCase(Locale.ROOT)
                 .replaceAll("\\s+", " ")
                 .trim();
     }
-}
 
+    private double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(value, max));
+    }
+}

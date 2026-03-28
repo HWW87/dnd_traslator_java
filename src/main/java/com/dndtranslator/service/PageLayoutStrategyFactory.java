@@ -9,17 +9,23 @@ public class PageLayoutStrategyFactory {
     private final PageLayoutStrategy fallbackStrategy;
 
     public PageLayoutStrategyFactory(PageLayoutBuilder pageLayoutBuilder) {
-        this.strategies = new EnumMap<>(PageType.class);
+        EnumMap<PageType, PageLayoutStrategy> strategyMap = new EnumMap<>(PageType.class);
 
-        strategies.put(PageType.TEXT_HEAVY, new TextHeavyLayoutStrategy(pageLayoutBuilder));
-        strategies.put(PageType.IMAGE_HEAVY, new ImageHeavyLayoutStrategy(pageLayoutBuilder));
-        strategies.put(PageType.MAP_PAGE, new MapPageLayoutStrategy(pageLayoutBuilder));
-        strategies.put(PageType.TABLE_OR_INDEX, new TableOrIndexLayoutStrategy(pageLayoutBuilder));
-        strategies.put(PageType.TITLE_OR_COVER, new TitleOrCoverLayoutStrategy(pageLayoutBuilder));
-        strategies.put(PageType.MIXED_LAYOUT, new MixedLayoutStrategy(pageLayoutBuilder));
-        strategies.put(PageType.UNKNOWN, new UnknownLayoutStrategy(pageLayoutBuilder));
+        strategyMap.put(PageType.TEXT_HEAVY, new TextHeavyLayoutStrategy(pageLayoutBuilder));
+        strategyMap.put(PageType.IMAGE_HEAVY, new ImageHeavyLayoutStrategy(pageLayoutBuilder));
+        strategyMap.put(PageType.MAP_PAGE, new MapPageLayoutStrategy(pageLayoutBuilder));
+        strategyMap.put(PageType.TABLE_OR_INDEX, new TableOrIndexLayoutStrategy(pageLayoutBuilder));
+        strategyMap.put(PageType.TITLE_OR_COVER, new TitleOrCoverLayoutStrategy(pageLayoutBuilder));
+        strategyMap.put(PageType.MIXED_LAYOUT, new MixedLayoutStrategy(pageLayoutBuilder));
+        strategyMap.put(PageType.UNKNOWN, new UnknownLayoutStrategy(pageLayoutBuilder));
 
-        this.fallbackStrategy = strategies.get(PageType.UNKNOWN);
+        PageLayoutStrategy unknown = strategyMap.get(PageType.UNKNOWN);
+        if (unknown == null) {
+            throw new IllegalStateException("Missing fallback strategy for PageType.UNKNOWN");
+        }
+
+        this.strategies = strategyMap;
+        this.fallbackStrategy = unknown;
     }
 
     public PageLayoutStrategy getStrategy(PageType pageType) {
@@ -29,4 +35,3 @@ public class PageLayoutStrategyFactory {
         return strategies.getOrDefault(pageType, fallbackStrategy);
     }
 }
-

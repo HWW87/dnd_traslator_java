@@ -8,6 +8,8 @@ import java.util.List;
 
 abstract class BasePageLayoutStrategy implements PageLayoutStrategy {
 
+    protected static final float MIN_MARGIN = 24f;
+
     protected final PageLayoutBuilder pageLayoutBuilder;
 
     protected BasePageLayoutStrategy(PageLayoutBuilder pageLayoutBuilder) {
@@ -15,20 +17,25 @@ abstract class BasePageLayoutStrategy implements PageLayoutStrategy {
     }
 
     protected PageLayout buildDefaultLayout(PageMeta meta, List<PdfImagePlacement> images) {
-        float margin = Math.max(meta.getLeftMargin(), 24f);
+        float margin = Math.max(meta.getLeftMargin(), MIN_MARGIN);
         List<BlockedRegion> blockedRegions = toBlockedRegions(images);
         return pageLayoutBuilder.build(meta.getWidth(), meta.getHeight(), margin, blockedRegions);
     }
 
-    protected List<BlockedRegion> toBlockedRegions(List<PdfImagePlacement> images) {
+    protected final List<BlockedRegion> toBlockedRegions(List<PdfImagePlacement> images) {
         List<BlockedRegion> blockedRegions = new ArrayList<>();
         if (images == null) {
             return blockedRegions;
         }
+
         for (PdfImagePlacement imagePlacement : images) {
             if (imagePlacement == null || !imagePlacement.isRenderable()) {
                 continue;
             }
+            if (imagePlacement.width() <= 0f || imagePlacement.height() <= 0f) {
+                continue;
+            }
+
             blockedRegions.add(new BlockedRegion(
                     imagePlacement.x(),
                     imagePlacement.y(),
@@ -39,10 +46,9 @@ abstract class BasePageLayoutStrategy implements PageLayoutStrategy {
         return blockedRegions;
     }
 
-    protected List<LayoutBox> sortTopDownLeftRight(List<LayoutBox> boxes) {
+    protected final List<LayoutBox> sortTopDownLeftRight(List<LayoutBox> boxes) {
         return boxes.stream()
                 .sorted(Comparator.comparing(LayoutBox::top).reversed().thenComparing(LayoutBox::x))
                 .toList();
     }
 }
-

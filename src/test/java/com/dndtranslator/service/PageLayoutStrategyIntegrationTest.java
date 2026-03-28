@@ -23,7 +23,8 @@ class PageLayoutStrategyIntegrationTest {
                 new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
                 List.of(),
                 List.of(new Paragraph("Long paragraph text", 2, 30f, 720f, "Font", 12f)),
-                PageType.TEXT_HEAVY
+                PageType.TEXT_HEAVY,
+                null
         );
 
         PageLayoutStrategy strategy = factory.getStrategy(PageType.TEXT_HEAVY);
@@ -52,7 +53,8 @@ class PageLayoutStrategyIntegrationTest {
                 new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
                 List.of(image),
                 List.of(),
-                PageType.MAP_PAGE
+                PageType.MAP_PAGE,
+                null
         );
 
         PageLayoutStrategy strategy = factory.getStrategy(PageType.MAP_PAGE);
@@ -69,7 +71,8 @@ class PageLayoutStrategyIntegrationTest {
                 new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
                 List.of(),
                 List.of(),
-                PageType.TABLE_OR_INDEX
+                PageType.TABLE_OR_INDEX,
+                null
         );
 
         PageLayoutStrategy strategy = factory.getStrategy(PageType.TABLE_OR_INDEX);
@@ -98,7 +101,8 @@ class PageLayoutStrategyIntegrationTest {
                 new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
                 List.of(mainImage),
                 List.of(new Paragraph("Caption", 4, 32f, 90f, "Font", 11f)),
-                PageType.IMAGE_HEAVY
+                PageType.IMAGE_HEAVY,
+                null
         );
 
         PageLayoutStrategy strategy = factory.getStrategy(PageType.IMAGE_HEAVY);
@@ -116,7 +120,8 @@ class PageLayoutStrategyIntegrationTest {
                 new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
                 List.of(),
                 List.of(new Paragraph("Title", 1, 40f, 700f, "Font", 18f)),
-                PageType.TITLE_OR_COVER
+                PageType.TITLE_OR_COVER,
+                null
         );
 
         PageLayoutStrategy strategy = factory.getStrategy(PageType.TITLE_OR_COVER);
@@ -133,7 +138,8 @@ class PageLayoutStrategyIntegrationTest {
                 new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
                 List.of(),
                 List.of(),
-                PageType.UNKNOWN
+                PageType.UNKNOWN,
+                null
         );
 
         PageLayoutStrategy strategy = factory.getStrategy(PageType.UNKNOWN);
@@ -143,4 +149,3 @@ class PageLayoutStrategyIntegrationTest {
         assertFalse(context.getPageLayout().textBoxes().isEmpty());
     }
 }
-

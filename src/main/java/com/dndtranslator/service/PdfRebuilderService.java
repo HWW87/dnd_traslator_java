@@ -106,7 +106,14 @@ public class PdfRebuilderService {
                     PageAnalysisData analysisData = pageAnalyzer.analyze(pageNumber, meta, pageImages, pageParagraphs);
                     PageType pageType = pageTypeClassifier.classify(analysisData);
                     PageLayoutStrategy strategy = pageLayoutStrategyFactory.getStrategy(pageType);
-                    PageRenderContext renderContext = new PageRenderContext(pageNumber, meta, pageImages, pageParagraphs, pageType);
+                    PageRenderContext renderContext = new PageRenderContext(
+                            pageNumber,
+                            meta,
+                            pageImages,
+                            pageParagraphs,
+                            pageType,
+                            analysisData
+                    );
                     strategy.renderPage(renderContext);
 
                     PageLayout pageLayout = ensureLayoutFallback(renderContext, meta, pageImages);

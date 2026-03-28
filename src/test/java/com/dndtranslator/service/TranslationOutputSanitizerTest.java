@@ -3,6 +3,8 @@ package com.dndtranslator.service;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TranslationOutputSanitizerTest {
 
@@ -41,6 +43,21 @@ class TranslationOutputSanitizerTest {
         String sanitized = sanitizer.sanitize("  Resultado:   Hola    mundo  \n\n\n  line 2   ");
 
         assertEquals("Hola mundo\n\nline 2", sanitized);
+    }
+
+    @Test
+    void removesLeadingMetaLinesBeforeUsefulContent() {
+        String sanitized = sanitizer.sanitize("Output:\nAnswer:\nClase de Armadura 18");
+
+        assertEquals("Clase de Armadura 18", sanitized);
+    }
+
+    @Test
+    void removesEnglishAssistantPrefaceVariants() {
+        String sanitized = sanitizer.removeAssistantPrefaces("Here's the translated text: Damage Reduction 5");
+
+        assertFalse(sanitized.toLowerCase().contains("here's the translated text"));
+        assertTrue(sanitized.endsWith("Reduction 5"));
     }
 }
 
