@@ -10,8 +10,6 @@ public class MapPageLayoutStrategy extends BasePageLayoutStrategy {
 
     private static final float MIN_BOX_WIDTH = 90f;
     private static final float MIN_BOX_HEIGHT = 28f;
-    private static final float VISUAL_PADDING = 6f;
-    private static final float MIN_MARGIN = 24f;
 
     public MapPageLayoutStrategy(PageLayoutBuilder pageLayoutBuilder) {
         super(pageLayoutBuilder);
@@ -36,18 +34,15 @@ public class MapPageLayoutStrategy extends BasePageLayoutStrategy {
             return;
         }
 
-        float leftMargin = Math.max(meta.getLeftMargin(), MIN_MARGIN);
-        float topMargin = Math.max(meta.getTopMargin(), MIN_MARGIN);
-        float bottomMargin = MIN_MARGIN;
-        float rightMargin = leftMargin;
+        StrategyMargins margins = resolveMargins(meta, MAP_MIN_MARGIN, MAP_MIN_MARGIN);
 
         float pageWidth = meta.getWidth();
         float pageHeight = meta.getHeight();
 
-        float usableLeft = leftMargin;
-        float usableRight = pageWidth - rightMargin;
-        float usableBottom = bottomMargin;
-        float usableTop = pageHeight - topMargin;
+        float usableLeft = margins.left();
+        float usableRight = pageWidth - margins.right();
+        float usableBottom = margins.bottom();
+        float usableTop = pageHeight - margins.top();
 
         List<LayoutBox> mapAwareBoxes = new ArrayList<>();
 
@@ -58,41 +53,41 @@ public class MapPageLayoutStrategy extends BasePageLayoutStrategy {
                     usableLeft,
                     usableBottom,
                     usableRight - usableLeft,
-                    Math.max(0f, mainVisual.y() - usableBottom - VISUAL_PADDING)
+                    Math.max(0f, mainVisual.y() - usableBottom - VISUAL_REGION_PADDING)
             ));
 
             addIfValid(mapAwareBoxes, new LayoutBox(
                     usableLeft,
-                    mainVisual.top() + VISUAL_PADDING,
+                    mainVisual.top() + VISUAL_REGION_PADDING,
                     usableRight - usableLeft,
-                    Math.max(0f, usableTop - (mainVisual.top() + VISUAL_PADDING))
+                    Math.max(0f, usableTop - (mainVisual.top() + VISUAL_REGION_PADDING))
             ));
 
             addIfValid(mapAwareBoxes, new LayoutBox(
                     usableLeft,
                     mainVisual.y(),
-                    Math.max(0f, mainVisual.x() - usableLeft - VISUAL_PADDING),
+                    Math.max(0f, mainVisual.x() - usableLeft - VISUAL_REGION_PADDING),
                     mainVisual.height()
             ));
 
             addIfValid(mapAwareBoxes, new LayoutBox(
-                    mainVisual.right() + VISUAL_PADDING,
+                    mainVisual.right() + VISUAL_REGION_PADDING,
                     mainVisual.y(),
-                    Math.max(0f, usableRight - (mainVisual.right() + VISUAL_PADDING)),
+                    Math.max(0f, usableRight - (mainVisual.right() + VISUAL_REGION_PADDING)),
                     mainVisual.height()
             ));
         } else {
             addIfValid(mapAwareBoxes, new LayoutBox(
                     usableLeft,
                     mainVisual.y(),
-                    Math.max(0f, mainVisual.x() - usableLeft - VISUAL_PADDING),
+                    Math.max(0f, mainVisual.x() - usableLeft - VISUAL_REGION_PADDING),
                     mainVisual.height()
             ));
 
             addIfValid(mapAwareBoxes, new LayoutBox(
-                    mainVisual.right() + VISUAL_PADDING,
+                    mainVisual.right() + VISUAL_REGION_PADDING,
                     mainVisual.y(),
-                    Math.max(0f, usableRight - (mainVisual.right() + VISUAL_PADDING)),
+                    Math.max(0f, usableRight - (mainVisual.right() + VISUAL_REGION_PADDING)),
                     mainVisual.height()
             ));
 
@@ -100,14 +95,14 @@ public class MapPageLayoutStrategy extends BasePageLayoutStrategy {
                     usableLeft,
                     usableBottom,
                     usableRight - usableLeft,
-                    Math.max(0f, mainVisual.y() - usableBottom - VISUAL_PADDING)
+                    Math.max(0f, mainVisual.y() - usableBottom - VISUAL_REGION_PADDING)
             ));
 
             addIfValid(mapAwareBoxes, new LayoutBox(
                     usableLeft,
-                    mainVisual.top() + VISUAL_PADDING,
+                    mainVisual.top() + VISUAL_REGION_PADDING,
                     usableRight - usableLeft,
-                    Math.max(0f, usableTop - (mainVisual.top() + VISUAL_PADDING))
+                    Math.max(0f, usableTop - (mainVisual.top() + VISUAL_REGION_PADDING))
             ));
         }
 

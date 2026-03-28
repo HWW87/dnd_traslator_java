@@ -9,14 +9,48 @@ public class PageLayoutBuilder {
     private static final float REGION_PADDING = 6f;
     private static final float MIN_BOX_WIDTH = 48f;
     private static final float MIN_BOX_HEIGHT = 22f;
+    private static final float MIN_EFFECTIVE_MARGIN = 12f;
 
     public PageLayout build(float pageWidth, float pageHeight, float margin, List<BlockedRegion> blockedRegions) {
-        float effectiveMargin = Math.max(12f, margin);
+        return build(pageWidth, pageHeight, margin, margin, margin, margin, blockedRegions);
+    }
+
+    public PageLayout build(
+            float pageWidth,
+            float pageHeight,
+            float horizontalMargin,
+            float verticalMargin,
+            List<BlockedRegion> blockedRegions
+    ) {
+        return build(
+                pageWidth,
+                pageHeight,
+                horizontalMargin,
+                horizontalMargin,
+                verticalMargin,
+                verticalMargin,
+                blockedRegions
+        );
+    }
+
+    public PageLayout build(
+            float pageWidth,
+            float pageHeight,
+            float leftMargin,
+            float rightMargin,
+            float topMargin,
+            float bottomMargin,
+            List<BlockedRegion> blockedRegions
+    ) {
+        float effectiveLeftMargin = Math.max(MIN_EFFECTIVE_MARGIN, leftMargin);
+        float effectiveRightMargin = Math.max(MIN_EFFECTIVE_MARGIN, rightMargin);
+        float effectiveTopMargin = Math.max(MIN_EFFECTIVE_MARGIN, topMargin);
+        float effectiveBottomMargin = Math.max(MIN_EFFECTIVE_MARGIN, bottomMargin);
         LayoutBox initial = new LayoutBox(
-                effectiveMargin,
-                effectiveMargin,
-                Math.max(1f, pageWidth - (effectiveMargin * 2f)),
-                Math.max(1f, pageHeight - (effectiveMargin * 2f))
+                effectiveLeftMargin,
+                effectiveBottomMargin,
+                Math.max(1f, pageWidth - effectiveLeftMargin - effectiveRightMargin),
+                Math.max(1f, pageHeight - effectiveTopMargin - effectiveBottomMargin)
         );
 
         List<LayoutBox> boxes = new ArrayList<>();

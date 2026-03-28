@@ -8,8 +8,6 @@ import java.util.List;
 
 public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
 
-    private static final float MIN_MARGIN = 28f;
-    private static final float VISUAL_PADDING = 6f;
     private static final float MIN_BOX_WIDTH = 120f;
     private static final float MIN_BOX_HEIGHT = 40f;
     private static final float DOMINANT_VISUAL_MIN_PAGE_RATIO = 0.18f;
@@ -21,13 +19,13 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
     @Override
     public void renderPage(PageRenderContext context) {
         PageMeta meta = context.getPageMeta();
-        float margin = Math.max(meta.getLeftMargin(), MIN_MARGIN);
+        StrategyMargins margins = resolveMargins(meta, TABLE_INDEX_MIN_MARGIN, TABLE_INDEX_MIN_MARGIN);
 
         List<BlockedRegion> blockedRegions = toBlockedRegions(context.getPageImages());
         List<LayoutBox> boxes = new ArrayList<>();
 
         if (blockedRegions.isEmpty()) {
-            boxes.add(buildFullFlowBox(meta, margin));
+            boxes.add(buildFullFlowBox(meta, margins));
             context.setPageLayout(new PageLayout(boxes, blockedRegions));
             return;
         }
@@ -37,46 +35,47 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
                 .orElse(null);
 
         if (mainVisual == null) {
-            boxes.add(buildFullFlowBox(meta, margin));
+            boxes.add(buildFullFlowBox(meta, margins));
             context.setPageLayout(new PageLayout(boxes, blockedRegions));
             return;
         }
 
         if (!isDominantVisual(mainVisual, meta)) {
-            boxes.add(buildFullFlowBox(meta, margin));
+            boxes.add(buildFullFlowBox(meta, margins));
             context.setPageLayout(new PageLayout(boxes, blockedRegions));
             return;
         }
 
         float pageWidth = meta.getWidth();
         float pageHeight = meta.getHeight();
-        float usableWidth = Math.max(1f, pageWidth - (margin * 2f));
+        float usableWidth = Math.max(1f, pageWidth - margins.left() - margins.right());
+        float usableTop = pageHeight - margins.top();
 
         LayoutBox topBox = new LayoutBox(
-                margin,
-                margin,
+                margins.left(),
+                margins.bottom(),
                 usableWidth,
-                Math.max(0f, mainVisual.y() - margin - VISUAL_PADDING)
+                Math.max(0f, mainVisual.y() - margins.bottom() - VISUAL_REGION_PADDING)
         );
 
         LayoutBox bottomBox = new LayoutBox(
-                margin,
-                mainVisual.top() + VISUAL_PADDING,
+                margins.left(),
+                mainVisual.top() + VISUAL_REGION_PADDING,
                 usableWidth,
-                Math.max(0f, (pageHeight - margin) - (mainVisual.top() + VISUAL_PADDING))
+                Math.max(0f, usableTop - (mainVisual.top() + VISUAL_REGION_PADDING))
         );
 
         LayoutBox leftBox = new LayoutBox(
-                margin,
+                margins.left(),
                 mainVisual.y(),
-                Math.max(0f, mainVisual.x() - margin - VISUAL_PADDING),
+                Math.max(0f, mainVisual.x() - margins.left() - VISUAL_REGION_PADDING),
                 mainVisual.height()
         );
 
         LayoutBox rightBox = new LayoutBox(
-                mainVisual.right() + VISUAL_PADDING,
+                mainVisual.right() + VISUAL_REGION_PADDING,
                 mainVisual.y(),
-                Math.max(0f, (pageWidth - margin) - (mainVisual.right() + VISUAL_PADDING)),
+                Math.max(0f, (pageWidth - margins.right()) - (mainVisual.right() + VISUAL_REGION_PADDING)),
                 mainVisual.height()
         );
 
@@ -86,18 +85,18 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
         addIfValid(boxes, rightBox);
 
         if (boxes.isEmpty()) {
-            boxes.add(buildFullFlowBox(meta, margin));
+            boxes.add(buildFullFlowBox(meta, margins));
         }
 
         context.setPageLayout(new PageLayout(sortTopDownLeftRight(boxes), blockedRegions));
     }
 
-    private LayoutBox buildFullFlowBox(PageMeta meta, float margin) {
+    private LayoutBox buildFullFlowBox(PageMeta meta, StrategyMargins margins) {
         return new LayoutBox(
-                margin,
-                margin,
-                Math.max(1f, meta.getWidth() - (margin * 2f)),
-                Math.max(1f, meta.getHeight() - (margin * 2f))
+                margins.left(),
+                margins.bottom(),
+                Math.max(1f, meta.getWidth() - margins.left() - margins.right()),
+                Math.max(1f, meta.getHeight() - margins.top() - margins.bottom())
         );
     }
 

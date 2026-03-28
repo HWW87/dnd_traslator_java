@@ -24,6 +24,8 @@ import java.util.Map;
 import java.util.TreeSet;
 
 public class PdfRebuilderService {
+    private static final float FALLBACK_MIN_MARGIN = 24f;
+
 
     private static final Logger logger = LoggerFactory.getLogger(PdfRebuilderService.class);
 
@@ -208,8 +210,19 @@ public class PdfRebuilderService {
             ));
         }
 
-        float margin = Math.max(meta.getLeftMargin(), 24f);
-        return pageLayoutBuilder.build(meta.getWidth(), meta.getHeight(), margin, blockedRegions);
+        float leftMargin = Math.max(meta.getLeftMargin(), FALLBACK_MIN_MARGIN);
+        float rightMargin = leftMargin;
+        float topMargin = Math.max(meta.getTopMargin(), FALLBACK_MIN_MARGIN);
+        float bottomMargin = topMargin;
+        return pageLayoutBuilder.build(
+                meta.getWidth(),
+                meta.getHeight(),
+                leftMargin,
+                rightMargin,
+                topMargin,
+                bottomMargin,
+                blockedRegions
+        );
     }
 
     private void drawImages(

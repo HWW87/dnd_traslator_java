@@ -13,14 +13,14 @@ public class TitleOrCoverLayoutStrategy extends BasePageLayoutStrategy {
     @Override
     public void renderPage(PageRenderContext context) {
         PageMeta meta = context.getPageMeta();
-        float margin = Math.max(meta.getLeftMargin(), 36f);
+        StrategyMargins margins = resolveMargins(meta, TITLE_COVER_MIN_MARGIN, TITLE_COVER_MIN_MARGIN);
         float boxHeight = Math.min(180f, Math.max(60f, meta.getHeight() * 0.22f));
 
         // Portada/titulo: mantenemos visual principal y render de texto minimo.
         LayoutBox bottomBox = new LayoutBox(
-                margin,
-                margin,
-                Math.max(1f, meta.getWidth() - (margin * 2f)),
+                margins.left(),
+                margins.bottom(),
+                Math.max(1f, meta.getWidth() - margins.left() - margins.right()),
                 Math.max(1f, boxHeight)
         );
 
