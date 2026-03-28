@@ -38,6 +38,13 @@ public class TranslationCacheRepository {
         initCache();
     }
 
+    public Optional<String> findTranslation(TranslationCacheKey key) {
+        if (key == null) {
+            return Optional.empty();
+        }
+        return findTranslation(key.asStorageKey());
+    }
+
     public Optional<String> findTranslation(String key) {
         if (key == null || key.isBlank()) {
             return Optional.empty();
@@ -56,6 +63,13 @@ public class TranslationCacheRepository {
         }
 
         return Optional.empty();
+    }
+
+    public void saveTranslation(TranslationCacheKey key, String translatedText) {
+        if (key == null) {
+            return;
+        }
+        saveTranslation(key.asStorageKey(), translatedText, key.modelName());
     }
 
     public void saveTranslation(String key, String translatedText) {

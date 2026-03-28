@@ -20,6 +20,8 @@ public class TranslatorService {
 
     private static final int SINGLE_THREAD = 1;
     private static final int RETRY_COUNT = 2;
+    private static final String TRANSLATION_STRATEGY_VERSION = "translator-v1";
+    private static final String UNKNOWN_MODEL = "unknown";
 
     private final int maxThreads;
     private final OllamaClient ollamaClient;
@@ -143,7 +145,9 @@ public class TranslatorService {
     public String translate(String text, String targetLanguage) {
         if (text == null || text.isBlank()) return "";
 
-        Optional<String> cached = cacheRepository.findTranslation(text);
+        // Fast-path backward-compatible lookup before resolving model.
+        TranslationCacheKey preModelKey = buildCacheKey(text, targetLanguage, UNKNOWN_MODEL);
+        Optional<String> cached = cacheRepository.findTranslation(preModelKey);
         if (cached.isPresent()) {
             return cached.get();
         }
@@ -153,6 +157,12 @@ public class TranslatorService {
         if (model == null) {
             logger.warn("Ningun modelo Ollama disponible. Ejecute 'ollama serve'.");
             return "[Error: Ollama no disponible]";
+        }
+
+        TranslationCacheKey cacheKey = buildCacheKey(text, targetLanguage, model);
+        Optional<String> modelCached = cacheRepository.findTranslation(cacheKey);
+        if (modelCached.isPresent()) {
+            return modelCached.get();
         }
 
         String retryModel = modelResolver.resolveRetryModel(availableModels, model);
@@ -183,7 +193,7 @@ public class TranslatorService {
         }
 
         if (!Thread.currentThread().isInterrupted() && cacheable && !translatedFull.isBlank()) {
-            cacheRepository.saveTranslation(text, translatedFull, model);
+            cacheRepository.saveTranslation(cacheKey, translatedFull);
         }
         return translatedFull;
     }
@@ -289,6 +299,15 @@ public class TranslatorService {
 
     public void shutdown() {
         // Sin recursos concurrentes que cerrar en modo secuencial.
+    }
+
+    private TranslationCacheKey buildCacheKey(String sourceText, String targetLanguage, String modelName) {
+        return new TranslationCacheKey(
+                sourceText,
+                targetLanguage,
+                modelName,
+                TRANSLATION_STRATEGY_VERSION
+        );
     }
 
     private record SegmentTranslationResult(String text, boolean cacheable) {
