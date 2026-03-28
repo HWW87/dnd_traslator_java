@@ -83,6 +83,66 @@ class PageLayoutStrategyIntegrationTest {
     }
 
     @Test
+    void tableOrIndexWithDominantVisualBuildsBoxesAroundVisual() {
+        PdfImagePlacement dominantVisual = new PdfImagePlacement(
+                3,
+                new BufferedImage(300, 400, BufferedImage.TYPE_INT_RGB),
+                150f,
+                180f,
+                300f,
+                400f,
+                true,
+                "index-art",
+                "exact"
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                3,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(dominantVisual),
+                List.of(),
+                PageType.TABLE_OR_INDEX,
+                null
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.TABLE_OR_INDEX);
+        strategy.renderPage(context);
+
+        assertNotNull(context.getPageLayout());
+        assertTrue(context.getPageLayout().textBoxes().size() >= 2);
+    }
+
+    @Test
+    void tableOrIndexWithSmallDecorativeVisualKeepsSingleFlowBox() {
+        PdfImagePlacement decorativeVisual = new PdfImagePlacement(
+                3,
+                new BufferedImage(80, 80, BufferedImage.TYPE_INT_RGB),
+                40f,
+                680f,
+                80f,
+                80f,
+                true,
+                "badge",
+                "exact"
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                3,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(decorativeVisual),
+                List.of(),
+                PageType.TABLE_OR_INDEX,
+                null
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.TABLE_OR_INDEX);
+        strategy.renderPage(context);
+
+        assertNotNull(context.getPageLayout());
+        assertEquals(1, context.getPageLayout().textBoxes().size());
+    }
+
+    @Test
     void imageHeavyUsesConservativeBoxSelection() {
         PdfImagePlacement mainImage = new PdfImagePlacement(
                 4,

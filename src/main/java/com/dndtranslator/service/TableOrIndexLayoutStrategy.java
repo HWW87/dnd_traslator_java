@@ -12,6 +12,7 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
     private static final float VISUAL_PADDING = 6f;
     private static final float MIN_BOX_WIDTH = 120f;
     private static final float MIN_BOX_HEIGHT = 40f;
+    private static final float DOMINANT_VISUAL_MIN_PAGE_RATIO = 0.18f;
 
     public TableOrIndexLayoutStrategy(PageLayoutBuilder pageLayoutBuilder) {
         super(pageLayoutBuilder);
@@ -41,10 +42,15 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
             return;
         }
 
+        if (!isDominantVisual(mainVisual, meta)) {
+            boxes.add(buildFullFlowBox(meta, margin));
+            context.setPageLayout(new PageLayout(boxes, blockedRegions));
+            return;
+        }
+
         float pageWidth = meta.getWidth();
         float pageHeight = meta.getHeight();
         float usableWidth = Math.max(1f, pageWidth - (margin * 2f));
-        float usableHeight = Math.max(1f, pageHeight - (margin * 2f));
 
         LayoutBox topBox = new LayoutBox(
                 margin,
@@ -99,5 +105,11 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
         if (box.width() >= MIN_BOX_WIDTH && box.height() >= MIN_BOX_HEIGHT) {
             boxes.add(box);
         }
+    }
+
+    private boolean isDominantVisual(BlockedRegion visual, PageMeta meta) {
+        float pageArea = Math.max(1f, meta.getWidth() * meta.getHeight());
+        float visualArea = Math.max(0f, visual.width() * visual.height());
+        return (visualArea / pageArea) >= DOMINANT_VISUAL_MIN_PAGE_RATIO;
     }
 }
