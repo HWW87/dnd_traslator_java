@@ -12,6 +12,8 @@ public class PageTypeClassifier {
     private static final int MAP_MAX_WORDS = 100;
     private static final int MAP_MAX_LONG_LINES = 2;
     private static final int MAP_MIN_SHORT_LINES = 5;
+    private static final float MAP_MIN_SHORT_LINE_RATIO = 0.55f;
+    private static final int MAP_MAX_TEXT_BLOCKS = 22;
     private static final float MAP_MIN_IMAGE_RATIO = 0.20f;
 
     private static final int INDEX_MIN_SHORT_LINES = 10;
@@ -69,12 +71,16 @@ public class PageTypeClassifier {
     }
 
     private boolean isMapPage(PageAnalysisData data) {
+        int safeLineCount = Math.max(1, data.lineCount());
+        float shortLineRatio = (float) data.shortLineCount() / safeLineCount;
         boolean mostlyLabels =
-                data.shortLineCount() >= Math.max(MAP_MIN_SHORT_LINES, data.longLineCount() * 2);
+                data.shortLineCount() >= Math.max(MAP_MIN_SHORT_LINES, data.longLineCount() * 2)
+                        && shortLineRatio >= MAP_MIN_SHORT_LINE_RATIO;
         boolean lowContinuousText =
-                data.longLineCount() <= MAP_MAX_LONG_LINES || data.wordCount() <= MAP_MAX_WORDS;
+                data.longLineCount() <= MAP_MAX_LONG_LINES && data.wordCount() <= MAP_MAX_WORDS;
         boolean visualComposition =
                 data.estimatedImageAreaRatio() >= MAP_MIN_IMAGE_RATIO || data.hasLargeImage();
+        boolean looksStructuredIndex = data.hasIndexLikePatterns() || data.hasManyNumericLines();
 
         boolean strongKeywordPath =
                 data.hasMapLikeKeywords() && mostlyLabels && lowContinuousText && visualComposition;
@@ -83,8 +89,10 @@ public class PageTypeClassifier {
                 mostlyLabels
                         && lowContinuousText
                         && visualComposition
+                        && !looksStructuredIndex
+                        && !data.hasTitleLikePatterns()
                         && data.wordCount() <= 80
-                        && data.textBlockCount() <= Math.max(6, data.lineCount());
+                        && data.textBlockCount() <= Math.min(MAP_MAX_TEXT_BLOCKS, Math.max(6, data.lineCount()));
 
         return strongKeywordPath || heuristicOnlyPath;
     }

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PageLayoutBuilderTest {
@@ -33,6 +34,19 @@ class PageLayoutBuilderTest {
         PageLayout layout = builder.build(400f, 500f, 24f, blocked);
 
         assertTrue(layout.textBoxes().size() >= 1);
+    }
+
+    @Test
+    void supportsExplicitMarginsPerSide() {
+        PageLayoutBuilder builder = new PageLayoutBuilder();
+
+        PageLayout layout = builder.build(400f, 500f, 40f, 30f, 70f, 20f, List.of());
+
+        LayoutBox box = layout.textBoxes().get(0);
+        assertEquals(40f, box.x());
+        assertEquals(20f, box.y());
+        assertEquals(330f, box.width());
+        assertEquals(410f, box.height());
     }
 }
 

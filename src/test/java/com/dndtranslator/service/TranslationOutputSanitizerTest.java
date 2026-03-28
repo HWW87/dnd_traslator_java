@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TranslationOutputSanitizerTest {
 
@@ -56,8 +55,21 @@ class TranslationOutputSanitizerTest {
     void removesEnglishAssistantPrefaceVariants() {
         String sanitized = sanitizer.removeAssistantPrefaces("Here's the translated text: Damage Reduction 5");
 
-        assertFalse(sanitized.toLowerCase().contains("here's the translated text"));
-        assertTrue(sanitized.endsWith("Reduction 5"));
+        assertEquals("Damage Reduction 5", sanitized);
+    }
+
+    @Test
+    void stripsRepeatedLeadingMetaLinesButKeepsUsefulBody() {
+        String sanitized = sanitizer.sanitize("Output:\nTranslation:\nAnswer:\nClase de Armadura 18\nCon escudo");
+
+        assertEquals("Clase de Armadura 18\nCon escudo", sanitized);
+    }
+
+    @Test
+    void doesNotCutUsefulTextWhenMetaPhraseAppearsInMiddle() {
+        String sanitized = sanitizer.sanitize("La frase here is the translation aparece en contexto y debe conservarse");
+
+        assertEquals("La frase here is the translation aparece en contexto y debe conservarse", sanitized);
     }
 }
 

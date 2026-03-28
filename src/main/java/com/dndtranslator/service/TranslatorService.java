@@ -20,6 +20,8 @@ public class TranslatorService {
 
     private static final int SINGLE_THREAD = 1;
     private static final int RETRY_COUNT = 2;
+    private static final String TRANSLATION_STRATEGY_VERSION = "translator-v1";
+    private static final String UNKNOWN_MODEL = "unknown";
 
     private final int maxThreads;
     private final OllamaClient ollamaClient;
@@ -28,6 +30,8 @@ public class TranslatorService {
     private final ModelResolver modelResolver;
     private final TranslationOutputSanitizer outputSanitizer;
     private final TranslationValidator translationValidator;
+    private final PromptBuilder promptBuilder;
+    private final TranslationRetryPolicy translationRetryPolicy;
 
     public TranslatorService() {
         this(
@@ -37,6 +41,8 @@ public class TranslatorService {
                 new ModelResolver(),
                 new TranslationOutputSanitizer(),
                 new TranslationValidator(),
+                new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
                 SINGLE_THREAD
         );
     }
@@ -73,6 +79,8 @@ public class TranslatorService {
                 modelResolver,
                 outputSanitizer,
                 translationValidator,
+                new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
                 SINGLE_THREAD
         );
     }
@@ -86,12 +94,38 @@ public class TranslatorService {
             TranslationValidator translationValidator,
             int maxThreads
     ) {
+        this(
+                ollamaClient,
+                cacheRepository,
+                segmenter,
+                modelResolver,
+                outputSanitizer,
+                translationValidator,
+                new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
+                maxThreads
+        );
+    }
+
+    TranslatorService(
+            OllamaClient ollamaClient,
+            TranslationCacheRepository cacheRepository,
+            TranslationSegmenter segmenter,
+            ModelResolver modelResolver,
+            TranslationOutputSanitizer outputSanitizer,
+            TranslationValidator translationValidator,
+            PromptBuilder promptBuilder,
+            TranslationRetryPolicy translationRetryPolicy,
+            int maxThreads
+    ) {
         this.ollamaClient = ollamaClient;
         this.cacheRepository = cacheRepository;
         this.segmenter = segmenter;
         this.modelResolver = modelResolver;
         this.outputSanitizer = outputSanitizer;
         this.translationValidator = translationValidator;
+        this.promptBuilder = promptBuilder;
+        this.translationRetryPolicy = translationRetryPolicy;
         this.maxThreads = SINGLE_THREAD;
         if (maxThreads > SINGLE_THREAD) {
             logger.info("Se solicito concurrencia ({} hilos), pero se fuerza modo secuencial de 1 hilo.", maxThreads);
@@ -113,6 +147,8 @@ public class TranslatorService {
                 modelResolver,
                 new TranslationOutputSanitizer(),
                 new TranslationValidator(),
+                new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
                 maxThreads
         );
     }
@@ -127,14 +163,35 @@ public class TranslatorService {
 
         for (TextBlock block : blocks) {
             try {
-                results.add(translate(block.getText(), "Spanish"));
+                String translated = translate(block.getText(), "Spanish");
+                if (isVisibleErrorMarker(translated)) {
+                    results.add(resolveBlockFallback(block));
+                    logger.warn("Fallback en bloque {} por salida de error visible.", block == null ? -1 : block.getPage());
+                    continue;
+                }
+                results.add(translated);
             } catch (Exception e) {
-                results.add("[Error al traducir bloque]");
-                logger.error("Error en bloque: {}", e.getMessage());
+                results.add(resolveBlockFallback(block));
+                logger.error("Error en bloque {}: {}", block == null ? -1 : block.getPage(), e.getMessage());
             }
         }
 
         return results;
+    }
+
+    private String resolveBlockFallback(TextBlock block) {
+        if (block == null || block.getText() == null) {
+            return "";
+        }
+        return block.getText();
+    }
+
+    private boolean isVisibleErrorMarker(String text) {
+        if (text == null) {
+            return false;
+        }
+        String normalized = text.trim().toLowerCase();
+        return normalized.startsWith("[error:") || normalized.startsWith("[error al traducir");
     }
 
     // ===========================================================
@@ -143,7 +200,9 @@ public class TranslatorService {
     public String translate(String text, String targetLanguage) {
         if (text == null || text.isBlank()) return "";
 
-        Optional<String> cached = cacheRepository.findTranslation(text);
+        // Fast-path backward-compatible lookup before resolving model.
+        TranslationCacheKey preModelKey = buildCacheKey(text, targetLanguage, UNKNOWN_MODEL);
+        Optional<String> cached = cacheRepository.findTranslation(preModelKey);
         if (cached.isPresent()) {
             return cached.get();
         }
@@ -153,6 +212,12 @@ public class TranslatorService {
         if (model == null) {
             logger.warn("Ningun modelo Ollama disponible. Ejecute 'ollama serve'.");
             return "[Error: Ollama no disponible]";
+        }
+
+        TranslationCacheKey cacheKey = buildCacheKey(text, targetLanguage, model);
+        Optional<String> modelCached = cacheRepository.findTranslation(cacheKey);
+        if (modelCached.isPresent()) {
+            return modelCached.get();
         }
 
         String retryModel = modelResolver.resolveRetryModel(availableModels, model);
@@ -179,11 +244,11 @@ public class TranslatorService {
         if (!finalValidation.valid()) {
             cacheable = false;
             logger.warn("Validacion final de traduccion invalida: {}", String.join(", ", finalValidation.issues()));
-            translatedFull = chooseSafeOutput(text, translatedFull);
+            translatedFull = translationRetryPolicy.chooseSafeOutput(text, translatedFull, translationValidator);
         }
 
         if (!Thread.currentThread().isInterrupted() && cacheable && !translatedFull.isBlank()) {
-            cacheRepository.saveTranslation(text, translatedFull, model);
+            cacheRepository.saveTranslation(cacheKey, translatedFull);
         }
         return translatedFull;
     }
@@ -193,9 +258,13 @@ public class TranslatorService {
         String bestSanitized = "";
         List<String> issues = new ArrayList<>();
 
-        for (int attempt = 1; attempt <= RETRY_COUNT; attempt++) {
+        int maxAttempts = translationRetryPolicy.maxAttempts();
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                String rawResponse = ollamaClient.translate(currentModel, buildPrompt(text, targetLanguage, attempt > 1));
+                String prompt = attempt > 1
+                        ? promptBuilder.buildRetryPrompt(text, targetLanguage)
+                        : promptBuilder.buildTranslationPrompt(text, targetLanguage);
+                String rawResponse = ollamaClient.translate(currentModel, prompt);
                 String sanitized = outputSanitizer.sanitize(rawResponse);
                 TranslationValidationResult validation = translationValidator.validate(text, sanitized);
 
@@ -215,11 +284,11 @@ public class TranslatorService {
                         String.join(", ", validation.issues())
                 );
 
-                if (!validation.shouldRetry() || attempt == RETRY_COUNT) {
+                if (!translationRetryPolicy.shouldRetry(validation, attempt, maxAttempts)) {
                     break;
                 }
 
-                currentModel = resolveRetryModel(model, currentModel, retryModel);
+                currentModel = translationRetryPolicy.resolveNextModel(model, currentModel, retryModel);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return new SegmentTranslationResult("", false);
@@ -229,21 +298,14 @@ public class TranslatorService {
         }
 
         if (!bestSanitized.isBlank()) {
-            return new SegmentTranslationResult(chooseSafeOutput(text, bestSanitized), false);
+            return new SegmentTranslationResult(
+                    translationRetryPolicy.chooseSafeOutput(text, bestSanitized, translationValidator),
+                    false
+            );
         }
 
         logger.warn("No se pudo obtener una traduccion confiable para el segmento. Issues: {}", String.join(", ", issues));
         return new SegmentTranslationResult(text, false);
-    }
-
-    private String resolveRetryModel(String initialModel, String currentModel, String retryModel) {
-        if (retryModel == null || retryModel.isBlank()) {
-            return currentModel;
-        }
-        if (retryModel.equals(currentModel)) {
-            return initialModel;
-        }
-        return retryModel;
     }
 
     private String resolveModel(List<String> availableModels) {
@@ -253,42 +315,23 @@ public class TranslatorService {
         return modelResolver.resolveAvailableModel(availableModels);
     }
 
-    private String buildPrompt(String text, String targetLanguage, boolean retryAttempt) {
-        return String.format("""
-                Translate the following text *directly* to %s.
-                Rules:
-                - Do NOT include explanations, notes, or introductions.
-                - Preserve proper names and RPG terminology.
-                - Maintain line breaks and paragraph structure.
-                - Output ONLY the translated text.
-                %s
-
-                %s
-                """, targetLanguage,
-                retryAttempt
-                        ? "- DO NOT add markdown fences, apologies, or assistant-style prefacing."
-                        : "",
-                text);
-    }
 
     private String cleanFinalTranslation(String text) {
         return text == null ? "" : text.trim();
     }
 
-    private String chooseSafeOutput(String originalText, String candidateText) {
-        if (candidateText == null || candidateText.isBlank()) {
-            return originalText;
-        }
-
-        boolean obviouslyUnsafe = translationValidator.containsForbiddenPatterns(candidateText)
-                || translationValidator.hasGarbagePatterns(candidateText)
-                || candidateText.contains("```");
-
-        return obviouslyUnsafe ? originalText : candidateText;
-    }
 
     public void shutdown() {
         // Sin recursos concurrentes que cerrar en modo secuencial.
+    }
+
+    private TranslationCacheKey buildCacheKey(String sourceText, String targetLanguage, String modelName) {
+        return new TranslationCacheKey(
+                sourceText,
+                targetLanguage,
+                modelName,
+                TRANSLATION_STRATEGY_VERSION
+        );
     }
 
     private record SegmentTranslationResult(String text, boolean cacheable) {

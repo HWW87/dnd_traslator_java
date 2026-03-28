@@ -23,12 +23,12 @@ public class ImageHeavyLayoutStrategy extends BasePageLayoutStrategy {
                 .toList();
 
         if (selected.isEmpty()) {
-            float margin = Math.max(meta.getLeftMargin(), 30f);
+            StrategyMargins margins = resolveMargins(meta, IMAGE_HEAVY_MIN_MARGIN, IMAGE_HEAVY_MIN_MARGIN);
             selected = List.of(new LayoutBox(
-                    margin,
-                    margin,
-                    Math.max(1f, meta.getWidth() - (margin * 2f)),
-                    Math.max(1f, meta.getHeight() - (margin * 2f))
+                    margins.left(),
+                    margins.bottom(),
+                    Math.max(1f, meta.getWidth() - margins.left() - margins.right()),
+                    Math.max(1f, meta.getHeight() - margins.top() - margins.bottom())
             ));
         } else {
             selected = sortTopDownLeftRight(selected);

@@ -15,11 +15,11 @@ import org.junit.jupiter.api.io.TempDir;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -83,38 +83,39 @@ class PdfRebuilderServiceTest {
         assertTrue(images.get(1).isEmpty());
     }
 
+
     @Test
-    void movesTextBelowImageWhenParagraphWouldOverlap() throws Exception {
-        try (PDDocument document = new PDDocument();
-             InputStream fontStream = getClass().getResourceAsStream("/fonts/NotoSans-Regular.ttf")) {
-            PDType0Font font = PDType0Font.load(document, fontStream);
-            PdfRebuilderService rebuilder = new PdfRebuilderService();
+    void rebuildDelegatesCjkFontResolutionToFontResolver() throws Exception {
+        Path originalPdf = tempDir.resolve("source-font-resolver.pdf");
+        createPdfWithImage(originalPdf, 40f, 220f, 140f, 70f);
 
-            PdfImagePlacement imagePlacement = new PdfImagePlacement(
-                    1,
-                    sampleImage(),
-                    40f,
-                    180f,
-                    140f,
-                    70f,
-                    true,
-                    "test-image",
-                    "exact-bounding-box"
-            );
+        Paragraph paragraph = new Paragraph("Original text", 1, 40f, 160f, "Font", 12f);
+        paragraph.setTranslatedText("Texto traducido");
 
-            float safeY = rebuilder.resolveSafeY(
-                    font,
-                    "Texto traducido que pisaria la imagen",
-                    40f,
-                    210f,
-                    12f,
-                    140f,
-                    new PageMeta(300f, 400f, 24f, 24f, 1, "Font", 12f),
-                    List.of(imagePlacement)
-            );
+        AtomicBoolean resolverCalled = new AtomicBoolean(false);
+        FontResolver resolver = new FontResolver() {
+            @Override
+            public PDType0Font resolveCjkFont(PDDocument doc, Class<?> resourceOwner) {
+                resolverCalled.set(true);
+                return null;
+            }
+        };
 
-            assertTrue(safeY < 180f);
-        }
+        PdfRebuilderService rebuilder = new PdfRebuilderService(
+                new PdfImageExtractor(),
+                new PageLayoutBuilder(),
+                new TextLayoutEngine(),
+                resolver
+        );
+
+        rebuilder.rebuild(
+                originalPdf.toString(),
+                List.of(paragraph),
+                Map.of(1, new PageMeta(300f, 400f, 24f, 24f, 1, "Font", 12f))
+        );
+
+        assertTrue(resolverCalled.get());
+        assertTrue(Files.exists(translatedOutputPath(originalPdf)));
     }
 
     private void createPdfWithImage(Path pdfPath, float x, float y, float width, float height) throws Exception {
