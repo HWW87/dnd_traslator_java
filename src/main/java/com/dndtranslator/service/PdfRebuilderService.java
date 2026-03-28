@@ -30,14 +30,13 @@ public class PdfRebuilderService {
     private static final float IMAGE_TEXT_PADDING = 10f;
     private static final float MIN_TEXT_BASELINE = 24f;
 
-    private final Map<Integer, Boolean> glyphSupportCache = new HashMap<>();
     private final PdfImageExtractor imageExtractor;
     private final PageLayoutBuilder pageLayoutBuilder;
-    private final TextLayoutEngine textLayoutEngine;
     private final PageAnalyzer pageAnalyzer;
     private final PageTypeClassifier pageTypeClassifier;
     private final PageLayoutStrategyFactory pageLayoutStrategyFactory;
     private final FontResolver fontResolver;
+    private final PageTextRenderer pageTextRenderer;
 
     public PdfRebuilderService() {
         this(new PdfImageExtractor(), new PageLayoutBuilder(), new TextLayoutEngine(), new FontResolver());
@@ -59,11 +58,11 @@ public class PdfRebuilderService {
     ) {
         this.imageExtractor = imageExtractor;
         this.pageLayoutBuilder = pageLayoutBuilder;
-        this.textLayoutEngine = textLayoutEngine;
         this.pageAnalyzer = new PageAnalyzer();
         this.pageTypeClassifier = new PageTypeClassifier();
         this.pageLayoutStrategyFactory = new PageLayoutStrategyFactory(pageLayoutBuilder);
         this.fontResolver = fontResolver;
+        this.pageTextRenderer = new PageTextRenderer(textLayoutEngine);
     }
 
     public void rebuild(String originalPath, List<Paragraph> paragraphs, Map<Integer, PageMeta> layoutInfo) throws IOException {
@@ -128,7 +127,7 @@ public class PdfRebuilderService {
 
                     drawImages(doc, cs, page.getMediaBox(), pageImages);
                     List<String> carryOver = overflowByPage.getOrDefault(pageNumber, List.of());
-                    List<String> overflow = writeParagraphs(
+                    List<String> overflow = pageTextRenderer.writeParagraphs(
                             cs,
                             font,
                             meta,
@@ -249,69 +248,6 @@ public class PdfRebuilderService {
                 );
             }
         }
-    }
-
-    private List<String> writeParagraphs(
-            PDPageContentStream cs,
-            PDType0Font font,
-            PageMeta meta,
-            List<Paragraph> paragraphs,
-            PageLayout pageLayout,
-            List<String> carryOverTexts
-    ) throws IOException {
-        List<String> overflowTexts = new ArrayList<>();
-
-        if (carryOverTexts != null) {
-            for (String carryOver : carryOverTexts) {
-                if (carryOver == null || carryOver.isBlank()) {
-                    continue;
-                }
-                TextLayoutEngine.RenderResult rendered = textLayoutEngine.renderText(
-                        cs,
-                        pageLayout.textBoxes(),
-                        sanitizeForFont(carryOver, font),
-                        font,
-                        Math.max(meta.getLeftMargin(), 24f),
-                        meta.getHeight() - Math.max(meta.getTopMargin(), 24f)
-                );
-                if (!rendered.remainingText().isBlank()) {
-                    overflowTexts.add(rendered.remainingText());
-                }
-            }
-        }
-
-        for (Paragraph paragraph : paragraphs) {
-            String text = paragraph.getTranslatedText();
-            if (text == null || text.isBlank()) {
-                continue;
-            }
-
-            float x = paragraph.getX();
-            float y = paragraph.getY();
-            if (y < 50) {
-                y = 60;
-            }
-
-            String safeText = sanitizeForFont(text, font);
-            if (safeText.isBlank()) {
-                continue;
-            }
-
-            TextLayoutEngine.RenderResult rendered = textLayoutEngine.renderText(
-                    cs,
-                    pageLayout.textBoxes(),
-                    safeText,
-                    font,
-                    x,
-                    y
-            );
-
-            if (!rendered.remainingText().isBlank()) {
-                overflowTexts.add(rendered.remainingText());
-            }
-        }
-
-        return overflowTexts;
     }
 
     float resolveSafeY(
@@ -458,37 +394,6 @@ public class PdfRebuilderService {
 
         float clampedX = Math.max(columnStart, Math.min(x, columnEnd - 10f));
         return Math.max(60f, columnEnd - clampedX);
-    }
-
-    private String sanitizeForFont(String text, PDType0Font font) {
-        StringBuilder safe = new StringBuilder(text.length());
-        for (int i = 0; i < text.length(); ) {
-            int codePoint = text.codePointAt(i);
-            String ch = new String(Character.toChars(codePoint));
-            if (isGlyphSupported(font, codePoint)) {
-                safe.append(ch);
-            } else {
-                safe.append('?');
-            }
-            i += Character.charCount(codePoint);
-        }
-        return safe.toString();
-    }
-
-    private boolean isGlyphSupported(PDType0Font font, int codePoint) {
-        Boolean cached = glyphSupportCache.get(codePoint);
-        if (cached != null) {
-            return cached;
-        }
-        boolean supported;
-        try {
-            font.encode(new String(Character.toChars(codePoint)));
-            supported = true;
-        } catch (Exception e) {
-            supported = false;
-        }
-        glyphSupportCache.put(codePoint, supported);
-        return supported;
     }
 
 
