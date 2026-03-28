@@ -30,7 +30,7 @@ public class TextLayoutEngine {
         for (String word : words) {
             if (current.isEmpty()) {
                 if (measureTextWidth(word, font, fontSize) > maxWidth) {
-                    lines.add(word);
+                    lines.addAll(splitLongTokenByWidth(word, font, fontSize, maxWidth));
                 } else {
                     current.append(word);
                 }
@@ -43,7 +43,7 @@ public class TextLayoutEngine {
             } else {
                 lines.add(current.toString());
                 if (measureTextWidth(word, font, fontSize) > maxWidth) {
-                    lines.add(word);
+                    lines.addAll(splitLongTokenByWidth(word, font, fontSize, maxWidth));
                     current.setLength(0);
                 } else {
                     current = new StringBuilder(word);
@@ -56,6 +56,41 @@ public class TextLayoutEngine {
         }
 
         return lines;
+    }
+
+    private List<String> splitLongTokenByWidth(String token, PDFont font, float fontSize, float maxWidth) throws IOException {
+        if (token == null || token.isBlank()) {
+            return Collections.emptyList();
+        }
+
+        List<String> chunks = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+
+        for (int offset = 0; offset < token.length(); ) {
+            int codePoint = token.codePointAt(offset);
+            String character = new String(Character.toChars(codePoint));
+
+            if (current.isEmpty()) {
+                current.append(character);
+            } else {
+                String candidate = current + character;
+                if (measureTextWidth(candidate, font, fontSize) <= maxWidth) {
+                    current.append(character);
+                } else {
+                    chunks.add(current.toString());
+                    current.setLength(0);
+                    current.append(character);
+                }
+            }
+
+            offset += Character.charCount(codePoint);
+        }
+
+        if (!current.isEmpty()) {
+            chunks.add(current.toString());
+        }
+
+        return chunks;
     }
 
     public float measureTextWidth(String text, PDFont font, float fontSize) throws IOException {

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import java.io.InputStream;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -80,6 +81,37 @@ class TextLayoutEngineTest {
                 assertFalse(result.remainingText().isBlank());
                 assertTrue(result.wroteAny());
             }
+        }
+    }
+
+    @Test
+    void wrapTextHardWrapsSingleOverlongToken() throws Exception {
+        try (PDDocument document = new PDDocument();
+             InputStream fontStream = getClass().getResourceAsStream("/fonts/NotoSans-Regular.ttf")) {
+            PDType0Font font = PDType0Font.load(document, fontStream);
+            TextLayoutEngine engine = new TextLayoutEngine();
+
+            List<String> lines = engine.wrapText("supercalifragilisticoespialidoso", font, 11f, 50f);
+
+            assertTrue(lines.size() > 1);
+            for (String line : lines) {
+                assertTrue(engine.measureTextWidth(line, font, 11f) <= 52f);
+            }
+            assertEquals("supercalifragilisticoespialidoso", String.join("", lines));
+        }
+    }
+
+    @Test
+    void wrapTextKeepsNormalWordWrappingBehavior() throws Exception {
+        try (PDDocument document = new PDDocument();
+             InputStream fontStream = getClass().getResourceAsStream("/fonts/NotoSans-Regular.ttf")) {
+            PDType0Font font = PDType0Font.load(document, fontStream);
+            TextLayoutEngine engine = new TextLayoutEngine();
+
+            List<String> lines = engine.wrapText("uno dos tres", font, 11f, 200f);
+
+            assertEquals(1, lines.size());
+            assertEquals("uno dos tres", lines.get(0));
         }
     }
 }
