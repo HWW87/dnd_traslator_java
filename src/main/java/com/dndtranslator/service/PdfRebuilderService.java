@@ -20,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
 
@@ -28,14 +27,6 @@ public class PdfRebuilderService {
 
     private static final Logger logger = LoggerFactory.getLogger(PdfRebuilderService.class);
 
-    private static final String CJK_FONT_ENV_VAR = "DND_CJK_FONT_PATH";
-    private static final String CJK_RESOURCE_PATH = "/fonts/NotoSansCJKsc-Regular.otf";
-    private static final String WINDOWS_FONTS_DIR = "C:/Windows/Fonts";
-    private static final String[] CJK_FONT_KEYWORDS = new String[]{
-            "notosanscjk", "sourcehansans", "simhei", "simsun", "simkai",
-            "msyh", "msjh", "meiryo", "msgothic", "yu gothic", "malgun",
-            "mingliu", "pmingliu", "batang", "gulim", "dotum", "deng"
-    };
     private static final float IMAGE_TEXT_PADDING = 10f;
     private static final float MIN_TEXT_BASELINE = 24f;
 
@@ -46,22 +37,33 @@ public class PdfRebuilderService {
     private final PageAnalyzer pageAnalyzer;
     private final PageTypeClassifier pageTypeClassifier;
     private final PageLayoutStrategyFactory pageLayoutStrategyFactory;
+    private final FontResolver fontResolver;
 
     public PdfRebuilderService() {
-        this(new PdfImageExtractor(), new PageLayoutBuilder(), new TextLayoutEngine());
+        this(new PdfImageExtractor(), new PageLayoutBuilder(), new TextLayoutEngine(), new FontResolver());
     }
 
     PdfRebuilderService(PdfImageExtractor imageExtractor) {
-        this(imageExtractor, new PageLayoutBuilder(), new TextLayoutEngine());
+        this(imageExtractor, new PageLayoutBuilder(), new TextLayoutEngine(), new FontResolver());
     }
 
     PdfRebuilderService(PdfImageExtractor imageExtractor, PageLayoutBuilder pageLayoutBuilder, TextLayoutEngine textLayoutEngine) {
+        this(imageExtractor, pageLayoutBuilder, textLayoutEngine, new FontResolver());
+    }
+
+    PdfRebuilderService(
+            PdfImageExtractor imageExtractor,
+            PageLayoutBuilder pageLayoutBuilder,
+            TextLayoutEngine textLayoutEngine,
+            FontResolver fontResolver
+    ) {
         this.imageExtractor = imageExtractor;
         this.pageLayoutBuilder = pageLayoutBuilder;
         this.textLayoutEngine = textLayoutEngine;
         this.pageAnalyzer = new PageAnalyzer();
         this.pageTypeClassifier = new PageTypeClassifier();
         this.pageLayoutStrategyFactory = new PageLayoutStrategyFactory(pageLayoutBuilder);
+        this.fontResolver = fontResolver;
     }
 
     public void rebuild(String originalPath, List<Paragraph> paragraphs, Map<Integer, PageMeta> layoutInfo) throws IOException {
@@ -82,12 +84,12 @@ public class PdfRebuilderService {
                 font = PDType0Font.load(doc, fontStream);
             }
 
-            PDType0Font cjkFont = resolveCjkFont(doc);
+            PDType0Font cjkFont = fontResolver.resolveCjkFont(doc, this.getClass());
 
             if (cjkFont != null) {
                 font = cjkFont;
             } else {
-                logger.warn("No se encontro fuente CJK fallback. Define {} con ruta a .ttf/.otf para evitar reemplazos por '?'.", CJK_FONT_ENV_VAR);
+                logger.warn("No se encontro fuente CJK fallback. Define {} con ruta a .ttf/.otf para evitar reemplazos por '?'.", FontResolver.CJK_FONT_ENV_VAR);
             }
 
             Map<Integer, List<String>> overflowByPage = new HashMap<>();
@@ -489,103 +491,6 @@ public class PdfRebuilderService {
         return supported;
     }
 
-    private PDType0Font resolveCjkFont(PDDocument doc) {
-        try (InputStream cjkStream = this.getClass().getResourceAsStream(CJK_RESOURCE_PATH)) {
-            if (cjkStream != null) {
-                PDType0Font resourceFont = PDType0Font.load(doc, cjkStream);
-                logger.info("Usando fuente CJK embebida: {}", CJK_RESOURCE_PATH);
-                return resourceFont;
-            }
-        } catch (IOException e) {
-            logger.warn("No se pudo cargar fuente CJK embebida: {}", e.getMessage());
-        }
-
-        String customPath = System.getenv(CJK_FONT_ENV_VAR);
-        PDType0Font custom = tryLoadFontFile(doc, customPath, "entorno");
-        if (custom != null) {
-            return custom;
-        }
-
-        for (String candidate : findWindowsCjkCandidates()) {
-            PDType0Font systemFont = tryLoadFontFile(doc, candidate, "sistema");
-            if (systemFont != null) {
-                return systemFont;
-            }
-        }
-
-        return null;
-    }
-
-    private List<String> findWindowsCjkCandidates() {
-        List<String> candidates = new ArrayList<>();
-
-        String[] fixedCandidates = new String[]{
-                "C:/Windows/Fonts/simhei.ttf",
-                "C:/Windows/Fonts/simsun.ttf",
-                "C:/Windows/Fonts/simkai.ttf",
-                "C:/Windows/Fonts/msyh.ttf",
-                "C:/Windows/Fonts/meiryo.ttf",
-                "C:/Windows/Fonts/malgun.ttf",
-                "C:/Windows/Fonts/arialuni.ttf",
-                "C:/Windows/Fonts/NotoSansCJKsc-Regular.otf"
-        };
-        for (String candidate : fixedCandidates) {
-            candidates.add(candidate);
-        }
-
-        File fontsDir = new File(WINDOWS_FONTS_DIR);
-        if (!fontsDir.isDirectory()) {
-            return candidates;
-        }
-
-        File[] dynamicCandidates = fontsDir.listFiles((dir, name) -> {
-            String lower = name.toLowerCase(Locale.ROOT);
-            if (!isSupportedFontExtension(lower)) {
-                return false;
-            }
-            for (String keyword : CJK_FONT_KEYWORDS) {
-                if (lower.contains(keyword)) {
-                    return true;
-                }
-            }
-            return false;
-        });
-
-        if (dynamicCandidates != null) {
-            for (File file : dynamicCandidates) {
-                candidates.add(file.getAbsolutePath());
-            }
-        }
-
-        return candidates;
-    }
-
-    private PDType0Font tryLoadFontFile(PDDocument doc, String filePath, String sourceLabel) {
-        if (filePath == null || filePath.isBlank()) {
-            return null;
-        }
-
-        File file = new File(filePath.trim());
-        if (!file.exists() || !file.isFile()) {
-            return null;
-        }
-        if (!isSupportedFontExtension(file.getName())) {
-            return null;
-        }
-
-        try {
-            PDType0Font loaded = PDType0Font.load(doc, file);
-            logger.info("Usando fuente CJK ({}): {}", sourceLabel, file.getAbsolutePath());
-            return loaded;
-        } catch (IOException e) {
-            return null;
-        }
-    }
-
-    private boolean isSupportedFontExtension(String fileName) {
-        String lower = fileName.toLowerCase(Locale.ROOT);
-        return lower.endsWith(".ttf") || lower.endsWith(".otf");
-    }
 
     private float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(value, max));

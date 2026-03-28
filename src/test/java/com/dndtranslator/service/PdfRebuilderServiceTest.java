@@ -20,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -115,6 +116,40 @@ class PdfRebuilderServiceTest {
 
             assertTrue(safeY < 180f);
         }
+    }
+
+    @Test
+    void rebuildDelegatesCjkFontResolutionToFontResolver() throws Exception {
+        Path originalPdf = tempDir.resolve("source-font-resolver.pdf");
+        createPdfWithImage(originalPdf, 40f, 220f, 140f, 70f);
+
+        Paragraph paragraph = new Paragraph("Original text", 1, 40f, 160f, "Font", 12f);
+        paragraph.setTranslatedText("Texto traducido");
+
+        AtomicBoolean resolverCalled = new AtomicBoolean(false);
+        FontResolver resolver = new FontResolver() {
+            @Override
+            public PDType0Font resolveCjkFont(PDDocument doc, Class<?> resourceOwner) {
+                resolverCalled.set(true);
+                return null;
+            }
+        };
+
+        PdfRebuilderService rebuilder = new PdfRebuilderService(
+                new PdfImageExtractor(),
+                new PageLayoutBuilder(),
+                new TextLayoutEngine(),
+                resolver
+        );
+
+        rebuilder.rebuild(
+                originalPdf.toString(),
+                List.of(paragraph),
+                Map.of(1, new PageMeta(300f, 400f, 24f, 24f, 1, "Font", 12f))
+        );
+
+        assertTrue(resolverCalled.get());
+        assertTrue(Files.exists(translatedOutputPath(originalPdf)));
     }
 
     private void createPdfWithImage(Path pdfPath, float x, float y, float width, float height) throws Exception {
