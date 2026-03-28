@@ -139,6 +139,41 @@ class PageTypeClassifierTest {
     }
 
     @Test
+    void tableOrIndexHasPriorityWhenMapLikeShapeLacksMapSignals() {
+        PageAnalysisData data = baseDataBuilder()
+                .estimatedImageAreaRatio(0.34f)
+                .hasLargeImage(true)
+                .lineCount(20)
+                .shortLineCount(14)
+                .longLineCount(2)
+                .wordCount(92)
+                .hasMapLikeKeywords(false)
+                .hasManyNumericLines(true)
+                .hasIndexLikePatterns(true)
+                .build();
+
+        assertEquals(PageType.TABLE_OR_INDEX, classifier.classify(data));
+    }
+
+    @Test
+    void classifiesMapWithoutKeywordsWhenVisualLabelsAreStrongAndNotNumeric() {
+        PageAnalysisData data = baseDataBuilder()
+                .estimatedImageAreaRatio(0.33f)
+                .hasLargeImage(true)
+                .lineCount(12)
+                .shortLineCount(10)
+                .longLineCount(1)
+                .wordCount(58)
+                .textBlockCount(10)
+                .hasMapLikeKeywords(false)
+                .hasManyNumericLines(false)
+                .hasIndexLikePatterns(false)
+                .build();
+
+        assertEquals(PageType.MAP_PAGE, classifier.classify(data));
+    }
+
+    @Test
     void classifiesUnknownWhenNoStrongSignalExists() {
         PageAnalysisData data = baseDataBuilder()
                 .imageCount(0)
@@ -183,6 +218,7 @@ class PageTypeClassifierTest {
         PageAnalysisDataBuilder pageNumber(int value) { this.pageNumber = value; return this; }
         PageAnalysisDataBuilder imageCount(int value) { this.imageCount = value; return this; }
         PageAnalysisDataBuilder estimatedImageAreaRatio(float value) { this.estimatedImageAreaRatio = value; return this; }
+        PageAnalysisDataBuilder textBlockCount(int value) { this.textBlockCount = value; return this; }
         PageAnalysisDataBuilder lineCount(int value) { this.lineCount = value; return this; }
         PageAnalysisDataBuilder wordCount(int value) { this.wordCount = value; return this; }
         PageAnalysisDataBuilder shortLineCount(int value) { this.shortLineCount = value; return this; }
