@@ -31,6 +31,7 @@ public class TranslatorService {
     private final TranslationOutputSanitizer outputSanitizer;
     private final TranslationValidator translationValidator;
     private final PromptBuilder promptBuilder;
+    private final TranslationRetryPolicy translationRetryPolicy;
 
     public TranslatorService() {
         this(
@@ -41,6 +42,7 @@ public class TranslatorService {
                 new TranslationOutputSanitizer(),
                 new TranslationValidator(),
                 new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
                 SINGLE_THREAD
         );
     }
@@ -78,6 +80,7 @@ public class TranslatorService {
                 outputSanitizer,
                 translationValidator,
                 new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
                 SINGLE_THREAD
         );
     }
@@ -99,6 +102,7 @@ public class TranslatorService {
                 outputSanitizer,
                 translationValidator,
                 new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
                 maxThreads
         );
     }
@@ -111,6 +115,7 @@ public class TranslatorService {
             TranslationOutputSanitizer outputSanitizer,
             TranslationValidator translationValidator,
             PromptBuilder promptBuilder,
+            TranslationRetryPolicy translationRetryPolicy,
             int maxThreads
     ) {
         this.ollamaClient = ollamaClient;
@@ -120,6 +125,7 @@ public class TranslatorService {
         this.outputSanitizer = outputSanitizer;
         this.translationValidator = translationValidator;
         this.promptBuilder = promptBuilder;
+        this.translationRetryPolicy = translationRetryPolicy;
         this.maxThreads = SINGLE_THREAD;
         if (maxThreads > SINGLE_THREAD) {
             logger.info("Se solicito concurrencia ({} hilos), pero se fuerza modo secuencial de 1 hilo.", maxThreads);
@@ -142,6 +148,7 @@ public class TranslatorService {
                 new TranslationOutputSanitizer(),
                 new TranslationValidator(),
                 new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
                 maxThreads
         );
     }
@@ -216,7 +223,7 @@ public class TranslatorService {
         if (!finalValidation.valid()) {
             cacheable = false;
             logger.warn("Validacion final de traduccion invalida: {}", String.join(", ", finalValidation.issues()));
-            translatedFull = chooseSafeOutput(text, translatedFull);
+            translatedFull = translationRetryPolicy.chooseSafeOutput(text, translatedFull, translationValidator);
         }
 
         if (!Thread.currentThread().isInterrupted() && cacheable && !translatedFull.isBlank()) {
@@ -230,7 +237,8 @@ public class TranslatorService {
         String bestSanitized = "";
         List<String> issues = new ArrayList<>();
 
-        for (int attempt = 1; attempt <= RETRY_COUNT; attempt++) {
+        int maxAttempts = translationRetryPolicy.maxAttempts();
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 String prompt = attempt > 1
                         ? promptBuilder.buildRetryPrompt(text, targetLanguage)
@@ -255,11 +263,11 @@ public class TranslatorService {
                         String.join(", ", validation.issues())
                 );
 
-                if (!validation.shouldRetry() || attempt == RETRY_COUNT) {
+                if (!translationRetryPolicy.shouldRetry(validation, attempt, maxAttempts)) {
                     break;
                 }
 
-                currentModel = resolveRetryModel(model, currentModel, retryModel);
+                currentModel = translationRetryPolicy.resolveNextModel(model, currentModel, retryModel);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return new SegmentTranslationResult("", false);
@@ -269,21 +277,14 @@ public class TranslatorService {
         }
 
         if (!bestSanitized.isBlank()) {
-            return new SegmentTranslationResult(chooseSafeOutput(text, bestSanitized), false);
+            return new SegmentTranslationResult(
+                    translationRetryPolicy.chooseSafeOutput(text, bestSanitized, translationValidator),
+                    false
+            );
         }
 
         logger.warn("No se pudo obtener una traduccion confiable para el segmento. Issues: {}", String.join(", ", issues));
         return new SegmentTranslationResult(text, false);
-    }
-
-    private String resolveRetryModel(String initialModel, String currentModel, String retryModel) {
-        if (retryModel == null || retryModel.isBlank()) {
-            return currentModel;
-        }
-        if (retryModel.equals(currentModel)) {
-            return initialModel;
-        }
-        return retryModel;
     }
 
     private String resolveModel(List<String> availableModels) {
@@ -298,17 +299,6 @@ public class TranslatorService {
         return text == null ? "" : text.trim();
     }
 
-    private String chooseSafeOutput(String originalText, String candidateText) {
-        if (candidateText == null || candidateText.isBlank()) {
-            return originalText;
-        }
-
-        boolean obviouslyUnsafe = translationValidator.containsForbiddenPatterns(candidateText)
-                || translationValidator.hasGarbagePatterns(candidateText)
-                || candidateText.contains("```");
-
-        return obviouslyUnsafe ? originalText : candidateText;
-    }
 
     public void shutdown() {
         // Sin recursos concurrentes que cerrar en modo secuencial.
