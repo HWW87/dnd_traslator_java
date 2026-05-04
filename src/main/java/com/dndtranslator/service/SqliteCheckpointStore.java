@@ -23,6 +23,7 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Implementacion SQLite para guardar checkpoints de traduccion.
  */
+@SuppressWarnings({"SqlNoDataSourceInspection", "SqlResolve", "SqlDialectInspection"})
 public class SqliteCheckpointStore implements CheckpointStore {
 
     private static final Logger logger = LoggerFactory.getLogger(SqliteCheckpointStore.class);
@@ -54,6 +55,7 @@ public class SqliteCheckpointStore implements CheckpointStore {
         }
 
         try (Connection conn = openConnection();
+             //noinspection SqlNoDataSourceInspection
              PreparedStatement ps = conn.prepareStatement("""
                      SELECT pdf_path, target_language, paragraph_count, last_completed_index,
                             used_ocr_fallback, translated_payload
@@ -98,6 +100,7 @@ public class SqliteCheckpointStore implements CheckpointStore {
         try {
             for (int attempt = 1; attempt <= writeRetries; attempt++) {
                 try (Connection conn = openConnection();
+                     //noinspection SqlNoDataSourceInspection
                      PreparedStatement ps = conn.prepareStatement("""
                              INSERT OR REPLACE INTO translation_checkpoints(
                                  job_key, pdf_path, target_language, paragraph_count,
@@ -140,6 +143,7 @@ public class SqliteCheckpointStore implements CheckpointStore {
         }
 
         try (Connection conn = openConnection();
+             //noinspection SqlNoDataSourceInspection
              PreparedStatement ps = conn.prepareStatement("DELETE FROM translation_checkpoints WHERE job_key = ?")) {
             ps.setString(1, jobKey);
             ps.executeUpdate();
@@ -151,6 +155,7 @@ public class SqliteCheckpointStore implements CheckpointStore {
     private void initTable() {
         try (Connection conn = openConnection();
              Statement stmt = conn.createStatement()) {
+            //noinspection SqlNoDataSourceInspection
             stmt.execute("""
                     CREATE TABLE IF NOT EXISTS translation_checkpoints (
                         job_key TEXT PRIMARY KEY,
@@ -171,8 +176,11 @@ public class SqliteCheckpointStore implements CheckpointStore {
     private Connection openConnection() throws SQLException {
         Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
         try (Statement pragma = conn.createStatement()) {
+            //noinspection SqlNoDataSourceInspection
             pragma.execute("PRAGMA journal_mode=WAL");
+            //noinspection SqlNoDataSourceInspection
             pragma.execute("PRAGMA synchronous=NORMAL");
+            //noinspection SqlNoDataSourceInspection
             pragma.execute("PRAGMA busy_timeout=" + busyTimeoutMs);
         }
         return conn;
