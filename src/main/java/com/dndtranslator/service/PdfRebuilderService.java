@@ -103,7 +103,7 @@ public class PdfRebuilderService {
                     List<PdfImagePlacement> pageImages = imagesByPage.getOrDefault(pageNumber, List.of());
                     List<Paragraph> pageParagraphs = paragraphsByPage.getOrDefault(pageNumber, List.of());
 
-                    PageAnalysisData analysisData = pageAnalyzer.analyze(pageNumber, meta, pageImages, pageParagraphs);
+                    PageAnalysisData analysisData = pageAnalyzer.analyze(pageNumber, meta, pageParagraphs, pageImages);
                     PageType pageType = pageTypeClassifier.classify(analysisData);
                     PageLayoutStrategy strategy = pageLayoutStrategyFactory.getStrategy(pageType);
                     PageRenderContext renderContext = new PageRenderContext(
