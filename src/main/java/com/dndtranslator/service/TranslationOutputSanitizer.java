@@ -55,6 +55,19 @@ public class TranslationOutputSanitizer {
             "spanish translation:"
     );
 
+    private static final List<String> RESPONSE_WRAPPERS = List.of(
+            "response:",
+            "respuesta:",
+            "translation:",
+            "traduccion:",
+            "traducción:",
+            "assistant:",
+            "assistant response:",
+            "respuesta del asistente:",
+            "output:",
+            "result:"
+    );
+
     public String sanitize(String rawOutput) {
         if (rawOutput == null || rawOutput.isBlank()) {
             return "";
@@ -63,6 +76,7 @@ public class TranslationOutputSanitizer {
         String sanitized = stripMarkdownFences(rawOutput);
         sanitized = removeLeadingMetaLines(sanitized);
         sanitized = removeAssistantPrefaces(sanitized);
+        sanitized = stripResponseWrappers(sanitized);
         sanitized = removeForbiddenPhrases(sanitized);
         sanitized = normalizeWhitespace(sanitized);
 
@@ -112,7 +126,9 @@ public class TranslationOutputSanitizer {
 
         return text
                 .replaceAll("(?im)^```[a-z0-9_-]*\\s*$", "")
-                .replace("```", "");
+                .replaceAll("(?im)^~~~[a-z0-9_-]*\\s*$", "")
+                .replace("```", "")
+                .replace("~~~", "");
     }
 
     public String normalizeWhitespace(String text) {
@@ -179,12 +195,45 @@ public class TranslationOutputSanitizer {
             }
 
             if (!meta) {
+                for (String wrapper : RESPONSE_WRAPPERS) {
+                    String normalizedWrapper = normalizeComparable(wrapper);
+                    if (isMetaLine(normalized, normalizedWrapper)) {
+                        meta = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!meta) {
                 break;
             }
             start++;
         }
 
         return String.join("\n", lines.subList(start, lines.size()));
+    }
+
+    private String stripResponseWrappers(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+
+        String sanitized = text.trim();
+        boolean changed;
+
+        do {
+            changed = false;
+            for (String wrapper : RESPONSE_WRAPPERS) {
+                int cutIndex = findLoosePrefixCutIndex(sanitized, wrapper);
+                if (cutIndex >= 0) {
+                    sanitized = sanitized.substring(cutIndex).replaceFirst("^[\\s:;,.!¿?\\-]+", "").trim();
+                    changed = true;
+                    break;
+                }
+            }
+        } while (changed && !sanitized.isBlank());
+
+        return sanitized;
     }
 
     private String stripLeadingPhraseLoosely(String text, String phrase) {

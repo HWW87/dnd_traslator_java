@@ -71,5 +71,26 @@ class TranslationOutputSanitizerTest {
 
         assertEquals("La frase here is the translation aparece en contexto y debe conservarse", sanitized);
     }
+
+    @Test
+    void removesTildeMarkdownFences() {
+        String sanitized = sanitizer.sanitize("~~~spanish\nHola mundo\n~~~");
+
+        assertEquals("Hola mundo", sanitized);
+    }
+
+    @Test
+    void removesResponseWrapperPrefix() {
+        String sanitized = sanitizer.sanitize("Response:\nClase de Armadura 18");
+
+        assertEquals("Clase de Armadura 18", sanitized);
+    }
+
+    @Test
+    void removesAssistantResponseWrapperVariants() {
+        String sanitized = sanitizer.sanitize("Assistant response:\nResultado:\nPuntos de golpe 20");
+
+        assertEquals("Puntos de golpe 20", sanitized);
+    }
 }
 

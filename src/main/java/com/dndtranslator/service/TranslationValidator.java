@@ -24,7 +24,7 @@ public class TranslationValidator {
 
     private static final Pattern REPEATED_CHAR_PATTERN = Pattern.compile("(.)\\1{5,}");
     private static final Pattern REPEATED_WORD_PATTERN = Pattern.compile("(?i)\\b(\\p{L}{2,})\\b(?:\\s+\\1){3,}");
-    private static final Pattern MARKDOWN_FENCE_PATTERN = Pattern.compile("```[a-zA-Z0-9_-]*");
+    private static final Pattern MARKDOWN_FENCE_PATTERN = Pattern.compile("(```|~~~)[a-zA-Z0-9_-]*");
 
     private static final List<String> FORBIDDEN_PATTERNS = List.of(
             "aqui esta la traduccion",
@@ -47,7 +47,23 @@ public class TranslationValidator {
             "sure, here's",
             "sure, here is",
             "respuesta:",
-            "resultado:"
+            "resultado:",
+            "assistant:",
+            "assistant response:",
+            "respuesta del asistente:",
+            "output:",
+            "result:"
+    );
+
+    private static final List<String> ASSISTANT_LEAKAGE_MARKERS = List.of(
+            "as an ai",
+            "as a language model",
+            "como asistente",
+            "como modelo de lenguaje",
+            "i cannot",
+            "no puedo",
+            "i can help",
+            "puedo ayudarte"
     );
 
     private static final Set<String> ENGLISH_STOPWORDS = Set.of(
@@ -90,6 +106,13 @@ public class TranslationValidator {
             blocking = true;
             shouldRetry = true;
             confidence -= 0.45d;
+        }
+
+        if (containsAssistantLeakage(translatedText)) {
+            issues.add("BLOCKING: assistant leakage markers detected");
+            blocking = true;
+            shouldRetry = true;
+            confidence -= 0.30d;
         }
 
         if (containsMarkdownFences(translatedText)) {
@@ -167,6 +190,20 @@ public class TranslationValidator {
         return false;
     }
 
+    public boolean containsAssistantLeakage(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+
+        String comparable = normalizeComparable(text);
+        for (String marker : ASSISTANT_LEAKAGE_MARKERS) {
+            if (comparable.contains(normalizeComparable(marker))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean hasTooMuchResidualEnglish(String text) {
         return englishResidualRatio(text) >= ENGLISH_RESIDUAL_BLOCKING;
     }
@@ -228,7 +265,15 @@ public class TranslationValidator {
     }
 
     private boolean containsMarkdownFences(String text) {
-        return text != null && MARKDOWN_FENCE_PATTERN.matcher(text).find();
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+
+        String comparable = text.toLowerCase(Locale.ROOT);
+        if (comparable.contains("```") || comparable.contains("~~~")) {
+            return true;
+        }
+        return MARKDOWN_FENCE_PATTERN.matcher(text).find();
     }
 
     private boolean isBlankTranslation(String text) {

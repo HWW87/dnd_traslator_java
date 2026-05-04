@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -257,13 +258,14 @@ public class TranslatorService {
         String currentModel = model;
         String bestSanitized = "";
         List<String> issues = new ArrayList<>();
+        PromptBuilder.ContentType contentType = classifyContentType(text);
 
         int maxAttempts = translationRetryPolicy.maxAttempts();
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 String prompt = attempt > 1
-                        ? promptBuilder.buildRetryPrompt(text, targetLanguage)
-                        : promptBuilder.buildTranslationPrompt(text, targetLanguage);
+                        ? promptBuilder.buildRetryPrompt(text, targetLanguage, contentType)
+                        : promptBuilder.buildPromptForType(text, targetLanguage, contentType);
                 String rawResponse = ollamaClient.translate(currentModel, prompt);
                 String sanitized = outputSanitizer.sanitize(rawResponse);
                 TranslationValidationResult validation = translationValidator.validate(text, sanitized);
@@ -306,6 +308,51 @@ public class TranslatorService {
 
         logger.warn("No se pudo obtener una traduccion confiable para el segmento. Issues: {}", String.join(", ", issues));
         return new SegmentTranslationResult(text, false);
+    }
+
+    private PromptBuilder.ContentType classifyContentType(String text) {
+        if (text == null || text.isBlank()) {
+            return PromptBuilder.ContentType.NARRATIVE;
+        }
+
+        String normalized = text.toLowerCase(Locale.ROOT);
+        if (looksLikeLegalText(normalized)) {
+            return PromptBuilder.ContentType.LEGAL;
+        }
+        if (looksLikeStructuredLine(normalized, text)) {
+            return PromptBuilder.ContentType.STRUCTURED;
+        }
+        if (looksLikeMapLabel(normalized)) {
+            return PromptBuilder.ContentType.MAP_LABEL;
+        }
+        return PromptBuilder.ContentType.NARRATIVE;
+    }
+
+    private boolean looksLikeLegalText(String normalized) {
+        return normalized.contains("copyright")
+                || normalized.contains("all rights reserved")
+                || normalized.contains("license")
+                || normalized.contains("terms of use")
+                || normalized.contains("disclaimer")
+                || normalized.contains("©");
+    }
+
+    private boolean looksLikeStructuredLine(String normalized, String original) {
+        if (normalized.contains("....") || normalized.matches(".*\\.{2,}\\s*\\d{1,4}\\s*$")) {
+            return true;
+        }
+        return original.matches("(?m)^\\s*[\\p{L}\\p{N} ,:;.'-]{3,}\\s+\\d{1,4}\\s*$");
+    }
+
+    private boolean looksLikeMapLabel(String normalized) {
+        return normalized.contains("map")
+                || normalized.contains("sector")
+                || normalized.contains("region")
+                || normalized.contains("north")
+                || normalized.contains("south")
+                || normalized.contains("east")
+                || normalized.contains("west")
+                || normalized.contains("hex");
     }
 
     private String resolveModel(List<String> availableModels) {
