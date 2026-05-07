@@ -51,6 +51,8 @@ public class PageAnalyzer {
         int shortLineCount = 0;
         int longLineCount = 0;
         int numericLineCount = 0;
+        int dottedLeaderLineCount = 0;
+        int tableSeparatorLineCount = 0;
 
         StringBuilder combinedText = new StringBuilder();
         if (pageParagraphs != null) {
@@ -83,6 +85,12 @@ public class PageAnalyzer {
                     if (looksNumericLine(trimmed)) {
                         numericLineCount++;
                     }
+                    if (looksDottedLeaderLine(trimmed)) {
+                        dottedLeaderLineCount++;
+                    }
+                    if (looksTableSeparatorLine(trimmed)) {
+                        tableSeparatorLineCount++;
+                    }
 
                     combinedText.append(trimmed).append('\n');
                 }
@@ -93,7 +101,16 @@ public class PageAnalyzer {
         float imageRatio = Math.min(1f, imageArea / pageArea);
 
         boolean hasMapLikeKeywords = containsAnyKeyword(lowerText, MAP_KEYWORDS);
-        boolean hasIndexLikePatterns = detectIndexPatterns(lowerText, shortLineCount, numericLineCount, lineCount);
+        boolean hasTableLikePatterns = detectTablePatterns(tableSeparatorLineCount, numericLineCount, lineCount);
+        boolean hasDottedLeaderPatterns = detectDottedLeaderPatterns(dottedLeaderLineCount, lineCount, lowerText);
+        boolean hasIndexLikePatterns = detectIndexPatterns(
+                lowerText,
+                shortLineCount,
+                numericLineCount,
+                lineCount,
+                dottedLeaderLineCount,
+                tableSeparatorLineCount
+        );
         boolean hasTitleLikePatterns = detectTitlePatterns(lowerText, lineCount, longLineCount);
         boolean hasManyNumericLines = lineCount >= 4 && ((float) numericLineCount / Math.max(1, lineCount)) >= 0.35f;
         boolean hasVeryLowTextDensity = wordCount <= 70 || (lineCount <= 8 && wordCount <= 110);
@@ -113,6 +130,8 @@ public class PageAnalyzer {
                 hasManyNumericLines,
                 hasMapLikeKeywords,
                 hasIndexLikePatterns,
+                hasTableLikePatterns,
+                hasDottedLeaderPatterns,
                 hasTitleLikePatterns,
                 hasVeryLowTextDensity
         );
@@ -142,6 +161,47 @@ public class PageAnalyzer {
         return digits >= 2 && (letters == 0 || (float) digits / (digits + letters) >= 0.30f);
     }
 
+    private boolean looksDottedLeaderLine(String line) {
+        String trimmed = line == null ? "" : line.trim();
+        if (trimmed.isEmpty()) {
+            return false;
+        }
+        return trimmed.contains("...") || trimmed.matches(".*\\.{2,}\\s*\\d{1,4}\\s*$");
+    }
+
+    private boolean looksTableSeparatorLine(String line) {
+        String trimmed = line == null ? "" : line.trim();
+        if (trimmed.isEmpty()) {
+            return false;
+        }
+        if (trimmed.contains("|")) {
+            return true;
+        }
+        if (trimmed.contains("\t")) {
+            return true;
+        }
+
+        boolean spacedNumericColumns = trimmed.matches(".*\\b\\d+\\s{2,}\\d+.*");
+        boolean keyedColumns = trimmed.matches(".*[:;]\\s+[^\\s]+\\s{2,}[^\\s]+.*");
+        if (spacedNumericColumns || keyedColumns) {
+            return true;
+        }
+
+        int numericTokens = 0;
+        int alphaTokens = 0;
+        for (String token : trimmed.split("\\s+")) {
+            if (token.matches("\\d+")) {
+                numericTokens++;
+            } else if (token.matches("[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{2,}")) {
+                alphaTokens++;
+            }
+        }
+
+        return (numericTokens >= 2 && alphaTokens >= 2 && trimmed.length() <= 40)
+                || trimmed.contains("\t")
+                || trimmed.matches("(?i)^(?:[a-záéíóúüñ]{2,}\\s+\\d+\\s*){2,}$");
+    }
+
     private boolean containsAnyKeyword(String text, List<String> keywords) {
         if (text == null || text.isBlank()) {
             return false;
@@ -154,7 +214,14 @@ public class PageAnalyzer {
         return false;
     }
 
-    private boolean detectIndexPatterns(String lowerText, int shortLineCount, int numericLineCount, int lineCount) {
+    private boolean detectIndexPatterns(
+            String lowerText,
+            int shortLineCount,
+            int numericLineCount,
+            int lineCount,
+            int dottedLeaderLineCount,
+            int tableSeparatorLineCount
+    ) {
         if (lineCount == 0) {
             return false;
         }
@@ -162,7 +229,9 @@ public class PageAnalyzer {
         boolean indexHeaders = lowerText.contains("index") || lowerText.contains("contents") || lowerText.contains("indice") || lowerText.contains("índice");
         boolean shortDense = shortLineCount >= 10 && ((float) shortLineCount / lineCount) >= 0.55f;
         boolean numericDense = numericLineCount >= 4 && ((float) numericLineCount / lineCount) >= 0.30f;
-        return indexHeaders || (shortDense && numericDense) || (dottedEntries && shortDense);
+        boolean dottedDense = dottedLeaderLineCount >= 3 && ((float) dottedLeaderLineCount / lineCount) >= 0.20f;
+        boolean tableDense = tableSeparatorLineCount >= 4 && ((float) tableSeparatorLineCount / lineCount) >= 0.30f;
+        return indexHeaders || (shortDense && numericDense) || (dottedEntries && shortDense) || dottedDense || tableDense;
     }
 
     private boolean detectTitlePatterns(String lowerText, int lineCount, int longLineCount) {
@@ -170,6 +239,27 @@ public class PageAnalyzer {
             return true;
         }
         return lineCount <= 6 && longLineCount <= 1;
+    }
+
+    private boolean detectTablePatterns(int tableSeparatorLineCount, int numericLineCount, int lineCount) {
+        if (lineCount == 0) {
+            return false;
+        }
+        float tableRatio = (float) tableSeparatorLineCount / lineCount;
+        float numericRatio = (float) numericLineCount / lineCount;
+        return (tableSeparatorLineCount >= 3 && tableRatio >= 0.25f)
+                || (tableSeparatorLineCount >= 2 && numericRatio >= 0.35f)
+                || (tableSeparatorLineCount >= 2 && lineCount <= 8 && numericLineCount >= 2);
+    }
+
+    private boolean detectDottedLeaderPatterns(int dottedLeaderLineCount, int lineCount, String lowerText) {
+        if (lineCount == 0) {
+            return false;
+        }
+        boolean hasHeader = lowerText.contains("contents") || lowerText.contains("index")
+                || lowerText.contains("indice") || lowerText.contains("índice");
+        float ratio = (float) dottedLeaderLineCount / lineCount;
+        return dottedLeaderLineCount >= 2 && (ratio >= 0.20f || hasHeader);
     }
 }
 

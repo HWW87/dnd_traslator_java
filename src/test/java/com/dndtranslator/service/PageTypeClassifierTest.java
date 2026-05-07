@@ -50,6 +50,21 @@ class PageTypeClassifierTest {
     }
 
     @Test
+    void classifiesTableOrIndexPageUsingTableLikeSignal() {
+        PageAnalysisData data = baseDataBuilder()
+                .lineCount(20)
+                .shortLineCount(12)
+                .longLineCount(2)
+                .wordCount(84)
+                .hasManyNumericLines(true)
+                .hasIndexLikePatterns(false)
+                .hasTableLikePatterns(true)
+                .build();
+
+        assertEquals(PageType.TABLE_OR_INDEX, classifier.classify(data));
+    }
+
+    @Test
     void classifiesTitleOrCoverPage() {
         PageAnalysisData data = baseDataBuilder()
                 .pageNumber(1)
@@ -212,6 +227,8 @@ class PageTypeClassifierTest {
         private boolean hasManyNumericLines;
         private boolean hasMapLikeKeywords;
         private boolean hasIndexLikePatterns;
+        private boolean hasTableLikePatterns;
+        private boolean hasDottedLeaderPatterns;
         private boolean hasTitleLikePatterns;
         private boolean hasVeryLowTextDensity;
 
@@ -227,6 +244,8 @@ class PageTypeClassifierTest {
         PageAnalysisDataBuilder hasManyNumericLines(boolean value) { this.hasManyNumericLines = value; return this; }
         PageAnalysisDataBuilder hasMapLikeKeywords(boolean value) { this.hasMapLikeKeywords = value; return this; }
         PageAnalysisDataBuilder hasIndexLikePatterns(boolean value) { this.hasIndexLikePatterns = value; return this; }
+        PageAnalysisDataBuilder hasTableLikePatterns(boolean value) { this.hasTableLikePatterns = value; return this; }
+        PageAnalysisDataBuilder hasDottedLeaderPatterns(boolean value) { this.hasDottedLeaderPatterns = value; return this; }
         PageAnalysisDataBuilder hasTitleLikePatterns(boolean value) { this.hasTitleLikePatterns = value; return this; }
         PageAnalysisDataBuilder hasVeryLowTextDensity(boolean value) { this.hasVeryLowTextDensity = value; return this; }
 
@@ -246,6 +265,8 @@ class PageTypeClassifierTest {
                     hasManyNumericLines,
                     hasMapLikeKeywords,
                     hasIndexLikePatterns,
+                    hasTableLikePatterns,
+                    hasDottedLeaderPatterns,
                     hasTitleLikePatterns,
                     hasVeryLowTextDensity
             );

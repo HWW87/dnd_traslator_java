@@ -43,6 +43,26 @@ class PageAnalyzerTest {
         assertTrue(data.lineCount() >= 2);
     }
 
+    @Test
+    void detectsStructuredIndexTableSignalsFromLeadersAndColumns() {
+        PageAnalyzer analyzer = new PageAnalyzer();
+
+        PageMeta meta = new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f);
+        List<Paragraph> paragraphs = List.of(
+                new Paragraph("Contents", 1, 40f, 760f, "Font", 12f),
+                new Paragraph("Chapter One .... 12\nChapter Two .... 24\nAC 15  HP 30", 1, 40f, 700f, "Font", 10f),
+                new Paragraph("DEX 14  CON 16\nINT 10  WIS 12", 1, 40f, 620f, "Font", 10f)
+        );
+
+        PageAnalysisData data = analyzer.analyze(1, meta, paragraphs, List.of());
+
+        assertTrue(data.hasIndexLikePatterns());
+        assertTrue(data.hasTableLikePatterns());
+        assertTrue(data.hasDottedLeaderPatterns());
+        assertTrue(data.shortLineCount() >= 4);
+        assertTrue(data.hasManyNumericLines());
+    }
+
     private BufferedImage sampleImage() {
         BufferedImage image = new BufferedImage(120, 80, BufferedImage.TYPE_INT_RGB);
         for (int x = 0; x < image.getWidth(); x++) {
