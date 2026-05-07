@@ -123,6 +123,14 @@ public class PdfRebuilderService {
                             pageType,
                             strategy.getClass().getSimpleName()
                     );
+                    logger.info(
+                            "event=layout_page page={} pageType={} strategy={} textBlocks={} imageCount={}",
+                            pageNumber,
+                            pageType,
+                            strategy.getClass().getSimpleName(),
+                            pageParagraphs.size(),
+                            pageImages.size()
+                    );
 
                     drawImages(doc, cs, page.getMediaBox(), pageImages);
                     List<String> carryOver = overflowByPage.getOrDefault(pageNumber, List.of());
@@ -138,6 +146,7 @@ public class PdfRebuilderService {
                         int nextPage = pageNumber + 1;
                         overflowByPage.computeIfAbsent(nextPage, ignored -> new ArrayList<>()).addAll(overflow);
                         pageNumbers.add(nextPage);
+                        logger.info("event=layout_overflow page={} overflowLines={} nextPage={}", pageNumber, overflow.size(), nextPage);
                     }
                 }
             }

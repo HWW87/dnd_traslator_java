@@ -110,6 +110,9 @@ class TranslationCoordinatorResumeTest {
         assertEquals(JobState.COMPLETED, outcome.job().getCurrentState());
         assertEquals(2, outcome.job().getTotalUnits());
         assertEquals(2, outcome.result().paragraphCount());
+        assertEquals(2, outcome.job().getMetric("total_paragraphs", Integer.class));
+        assertEquals(2, outcome.job().getMetric("translated_paragraphs", Integer.class));
+        assertEquals(1, outcome.job().getMetric("resumed_paragraphs", Integer.class));
     }
 
     private File createDummyPdf() throws Exception {

@@ -9,6 +9,8 @@ import com.dndtranslator.service.PdfRebuilderService;
 import com.dndtranslator.service.PdfToParagraphService;
 import com.dndtranslator.service.SqliteCheckpointStore;
 import com.dndtranslator.service.TranslatorService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -23,6 +25,8 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 
 public class TranslationCoordinatorService {
+
+    private static final Logger logger = LoggerFactory.getLogger(TranslationCoordinatorService.class);
 
     private final OcrDecisionPort ocrDecisionPort;
     private final TextSanitizer textSanitizer;
@@ -185,8 +189,12 @@ public class TranslationCoordinatorService {
                 targetLanguage,
                 "workflow-default"
         );
+        QualityRunMetrics runMetrics = new QualityRunMetrics();
+        boolean debugMode = DebugModeConfig.isEnabled();
 
         try {
+            logger.info("event=job_start jobId={} input={} targetLanguage={} debugMode={}",
+                    job.getJobId(), pdfFile.getAbsolutePath(), targetLanguage, debugMode);
             safeTransition(job, JobState.VALIDATING);
             listener.onLog("📐 Analizando maquetacion y extrayendo texto...");
 
@@ -202,8 +210,22 @@ public class TranslationCoordinatorService {
             }
             job.setTotalUnits(total);
             job.setTotalPages(layoutInfo == null ? 0 : layoutInfo.size());
+            runMetrics.setTotalParagraphs(total);
+            runMetrics.setUsedOcrFallback(extraction.usedOcrFallback());
 
-            restoreCheckpointIfAvailable(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), paragraphs, listener);
+            int restoredFromCheckpoint = restoreCheckpointIfAvailable(
+                    jobKey,
+                    pdfFile,
+                    targetLanguage,
+                    extraction.usedOcrFallback(),
+                    paragraphs,
+                    listener
+            );
+            runMetrics.addResumedParagraphs(restoredFromCheckpoint);
+            if (debugMode && restoredFromCheckpoint > 0) {
+                logger.info("event=checkpoint_restore jobId={} restoredParagraphs={} usedOcrFallback={}",
+                        job.getJobId(), restoredFromCheckpoint, extraction.usedOcrFallback());
+            }
 
             listener.onLog("📄 Parrafos detectados: " + total);
 
@@ -211,6 +233,7 @@ public class TranslationCoordinatorService {
                 safeTransition(job, JobState.TRANSLATING);
                 List<Paragraph> pendingParagraphs = resolvePendingParagraphs(paragraphs);
                 if (!pendingParagraphs.isEmpty()) {
+                    logger.info("event=translate_start jobId={} pendingParagraphs={}", job.getJobId(), pendingParagraphs.size());
                     translateParagraphs(pendingParagraphs, targetLanguage, listener);
                 } else {
                     listener.onLog("♻️ Todos los parrafos ya estaban traducidos en checkpoint. Saltando traduccion.");
@@ -233,8 +256,13 @@ public class TranslationCoordinatorService {
                 pdfRebuilderGateway.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
 
                 updateJobUnitMetrics(job, paragraphs);
+                runMetrics.setTranslatedParagraphs(translatedCount);
+                runMetrics.addFallbackParagraphs(Math.max(0, total - translatedCount));
                 String outputPath = moveOutputToPartialPath(pdfFile.getAbsolutePath());
                 listener.onLog("✅ PDF parcial generado con " + translatedCount + " parrafos traducidos.");
+                attachRunMetrics(job, runMetrics);
+                logger.info("event=job_partial_export jobId={} translated={} total={} output={}",
+                        job.getJobId(), translatedCount, total, outputPath);
                 return new TranslationExecutionOutcome(
                         new TranslationResult(outputPath, translatedCount, extraction.usedOcrFallback()),
                         job
@@ -249,19 +277,29 @@ public class TranslationCoordinatorService {
             checkpointStore.clear(jobKey);
 
             updateJobUnitMetrics(job, paragraphs);
+            int translatedCount = countTranslatedParagraphs(paragraphs);
+            runMetrics.setTranslatedParagraphs(translatedCount);
+            runMetrics.addFallbackParagraphs(Math.max(0, total - translatedCount));
             safeTransition(job, JobState.COMPLETED);
+            attachRunMetrics(job, runMetrics);
 
             String outputPath = buildOutputPath(pdfFile.getAbsolutePath());
             listener.onLog("🎉 Traduccion completa con maquetacion preservada.");
+            logger.info("event=job_completed jobId={} translated={} total={} usedOcrFallback={} output={}",
+                    job.getJobId(), translatedCount, total, extraction.usedOcrFallback(), outputPath);
             return new TranslationExecutionOutcome(
                     new TranslationResult(outputPath, total, extraction.usedOcrFallback()),
                     job
             );
         } catch (CancellationException e) {
             safeTransition(job, JobState.INTERRUPTED);
+            attachRunMetrics(job, runMetrics);
+            logger.warn("event=job_interrupted jobId={} reason={}", job.getJobId(), e.getMessage());
             throw e;
         } catch (Exception e) {
             safeTransition(job, JobState.FAILED);
+            attachRunMetrics(job, runMetrics);
+            logger.error("event=job_failed jobId={} error={}", job.getJobId(), e.getMessage());
             throw e;
         }
     }
@@ -387,11 +425,20 @@ public class TranslationCoordinatorService {
         job.putMetric("translated_units", countTranslatedParagraphs(paragraphs));
     }
 
+    private void attachRunMetrics(TranslationJob job, QualityRunMetrics runMetrics) {
+        if (job == null || runMetrics == null) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : runMetrics.asMap().entrySet()) {
+            job.putMetric(entry.getKey(), entry.getValue());
+        }
+    }
+
     private String buildJobKey(File pdfFile, String targetLanguage) {
         return pdfFile.getAbsolutePath() + "|" + (targetLanguage == null ? "" : targetLanguage.trim().toLowerCase());
     }
 
-    private void restoreCheckpointIfAvailable(
+    private int restoreCheckpointIfAvailable(
             String jobKey,
             File pdfFile,
             String targetLanguage,
@@ -399,6 +446,7 @@ public class TranslationCoordinatorService {
             List<Paragraph> paragraphs,
             TranslationEventListener listener
     ) {
+        final int[] restoredCounter = {0};
         checkpointStore.load(jobKey).ifPresent(snapshot -> {
             if (!pdfFile.getAbsolutePath().equals(snapshot.pdfPath())) {
                 checkpointStore.clear(jobKey);
@@ -427,6 +475,7 @@ public class TranslationCoordinatorService {
                 paragraphs.get(index).setTranslatedText(translated);
                 restored++;
             }
+            restoredCounter[0] = restored;
 
             if (restored > 0) {
                 listener.onLog("♻️ Resume activo: " + restored + " parrafos restaurados desde checkpoint.");
@@ -435,6 +484,7 @@ public class TranslationCoordinatorService {
                 }
             }
         });
+        return restoredCounter[0];
     }
 
     private List<Paragraph> resolvePendingParagraphs(List<Paragraph> paragraphs) {

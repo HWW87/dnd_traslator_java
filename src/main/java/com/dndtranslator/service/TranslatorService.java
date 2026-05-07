@@ -217,7 +217,6 @@ public class TranslatorService {
             logger.warn("Ningun modelo Ollama disponible. Ejecute 'ollama serve'.");
             return "[Error: Ollama no disponible]";
         }
-
         TranslationCacheKey cacheKey = buildCacheKey(text, targetLanguage, model);
         Optional<String> modelCached = cacheRepository.findTranslation(cacheKey);
         if (modelCached.isPresent()) {
@@ -227,6 +226,8 @@ public class TranslatorService {
         String retryModel = modelResolver.resolveRetryModel(availableModels, model);
 
         List<String> segments = segmenter.segment(text);
+        logger.info("event=translate_start model={} targetLanguage={} segmentCount={} textLength={}",
+                model, targetLanguage, segments.size(), text.length());
         StringBuilder translatedTotal = new StringBuilder();
         boolean cacheable = true;
 
@@ -253,6 +254,8 @@ public class TranslatorService {
 
         if (!Thread.currentThread().isInterrupted() && cacheable && !translatedFull.isBlank()) {
             cacheRepository.saveTranslation(cacheKey, translatedFull);
+            logger.info("event=cache_store model={} keyVersioned={} translatedLength={}",
+                    model, cacheKey.isVersionedMetadataPresent(), translatedFull.length());
         }
         return translatedFull;
     }
@@ -269,6 +272,8 @@ public class TranslatorService {
                 String prompt = attempt > 1
                         ? promptBuilder.buildRetryPrompt(text, targetLanguage, contentType)
                         : promptBuilder.buildPromptForType(text, targetLanguage, contentType);
+                logger.info("event=segment_attempt model={} attempt={} contentType={} promptLength={}",
+                        currentModel, attempt, contentType, prompt.length());
                 String rawResponse = ollamaClient.translate(currentModel, prompt);
                 String sanitized = outputSanitizer.sanitize(rawResponse);
                 TranslationValidationResult validation = translationValidator.validate(text, sanitized);
@@ -278,6 +283,8 @@ public class TranslatorService {
                 }
 
                 if (validation.valid()) {
+                    logger.info("event=segment_success model={} attempt={} contentType={} length={}",
+                            currentModel, attempt, contentType, sanitized.length());
                     return new SegmentTranslationResult(sanitized, true);
                 }
 
