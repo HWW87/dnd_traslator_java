@@ -83,6 +83,15 @@ public final class SystemConstants {
     /** Versión de estrategia de traducción (incrementar si cambian prompts) */
     public static final String TRANSLATION_STRATEGY_VERSION = "translator-v1";
 
+    /** Versión del sanitizador de salida para invalidación de cache */
+    public static final String SANITIZER_VERSION = "sanitizer-v1";
+
+    /** Versión del validador de salida para invalidación de cache */
+    public static final String VALIDATOR_VERSION = "validator-v1";
+
+    /** Versión del formato de clave de cache */
+    public static final String CACHE_KEY_FORMAT_VERSION = "v2";
+
     /** Modelo desconocido o no determinado */
     public static final String UNKNOWN_MODEL = "unknown";
 

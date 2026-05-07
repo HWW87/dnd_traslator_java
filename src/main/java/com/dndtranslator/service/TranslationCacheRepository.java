@@ -42,7 +42,18 @@ public class TranslationCacheRepository {
         if (key == null) {
             return Optional.empty();
         }
-        return findTranslation(key.asStorageKey());
+
+        Optional<String> versioned = findTranslation(key.asStorageKey());
+        if (versioned.isPresent()) {
+            return versioned;
+        }
+
+        // Compatibilidad: solo usar fallback legacy para claves sin metadata explícita.
+        if (!key.isVersionedMetadataPresent()) {
+            return findTranslation(key.asLegacyStorageKey());
+        }
+
+        return Optional.empty();
     }
 
     public Optional<String> findTranslation(String key) {

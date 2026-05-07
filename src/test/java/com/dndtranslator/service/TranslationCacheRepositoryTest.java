@@ -88,4 +88,36 @@ class TranslationCacheRepositoryTest {
 
         assertTrue(found.isEmpty());
     }
+
+    @Test
+    void fallsBackToLegacyKeyWhenMetadataVersionsAreUnknown() {
+        Path dbPath = tempDir.resolve("cache.db");
+        TranslationCacheRepository repository = new TranslationCacheRepository(dbPath.toString(), 1000, 2);
+
+        TranslationCacheKey legacyCompatKey = new TranslationCacheKey("attack", "Spanish", "gemma3:1b", "translator-v1");
+        repository.saveTranslation(legacyCompatKey.asLegacyStorageKey(), "ataque legacy", "gemma3:1b");
+
+        Optional<String> found = repository.findTranslation(legacyCompatKey);
+        assertTrue(found.isPresent());
+        assertEquals("ataque legacy", found.get());
+    }
+
+    @Test
+    void doesNotUseLegacyFallbackWhenVersionedMetadataIsPresent() {
+        Path dbPath = tempDir.resolve("cache.db");
+        TranslationCacheRepository repository = new TranslationCacheRepository(dbPath.toString(), 1000, 2);
+
+        TranslationCacheKey versionedKey = new TranslationCacheKey(
+                "attack",
+                "Spanish",
+                "gemma3:1b",
+                "translator-v1",
+                "sanitizer-v1",
+                "validator-v1"
+        );
+        repository.saveTranslation(versionedKey.asLegacyStorageKey(), "ataque legacy", "gemma3:1b");
+
+        Optional<String> found = repository.findTranslation(versionedKey);
+        assertTrue(found.isEmpty());
+    }
 }

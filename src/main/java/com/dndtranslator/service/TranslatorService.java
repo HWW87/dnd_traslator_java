@@ -1,5 +1,6 @@
 package com.dndtranslator.service;
 
+import com.dndtranslator.config.SystemConstants;
 import com.dndtranslator.model.TextBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,10 +20,12 @@ public class TranslatorService {
 
     private static final Logger logger = LoggerFactory.getLogger(TranslatorService.class);
 
-    private static final int SINGLE_THREAD = 1;
-    private static final int RETRY_COUNT = 2;
-    private static final String TRANSLATION_STRATEGY_VERSION = "translator-v1";
-    private static final String UNKNOWN_MODEL = "unknown";
+    private static final int SINGLE_THREAD = SystemConstants.SINGLE_THREAD_EXECUTOR;
+    private static final int RETRY_COUNT = SystemConstants.RETRY_COUNT_DEFAULT;
+    private static final String TRANSLATION_STRATEGY_VERSION = SystemConstants.TRANSLATION_STRATEGY_VERSION;
+    private static final String SANITIZER_VERSION = SystemConstants.SANITIZER_VERSION;
+    private static final String VALIDATOR_VERSION = SystemConstants.VALIDATOR_VERSION;
+    private static final String UNKNOWN_MODEL = SystemConstants.UNKNOWN_MODEL;
 
     private final int maxThreads;
     private final OllamaClient ollamaClient;
@@ -377,7 +380,9 @@ public class TranslatorService {
                 sourceText,
                 targetLanguage,
                 modelName,
-                TRANSLATION_STRATEGY_VERSION
+                TRANSLATION_STRATEGY_VERSION,
+                SANITIZER_VERSION,
+                VALIDATOR_VERSION
         );
     }
 
