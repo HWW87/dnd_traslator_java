@@ -3,6 +3,10 @@ package com.dndtranslator.service;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.nio.file.Path;
 import java.util.Optional;
 
@@ -119,5 +123,64 @@ class TranslationCacheRepositoryTest {
 
         Optional<String> found = repository.findTranslation(versionedKey);
         assertTrue(found.isEmpty());
+    }
+
+    @Test
+    void persistsVersionedMetadataColumnsForNewEntries() throws Exception {
+        Path dbPath = tempDir.resolve("cache.db");
+        TranslationCacheRepository repository = new TranslationCacheRepository(dbPath.toString(), 1000, 2);
+
+        TranslationCacheKey key = new TranslationCacheKey(
+                "attack",
+                "Spanish",
+                "gemma3:1b",
+                "translator-v1",
+                "sanitizer-v1",
+                "validator-v1"
+        );
+        repository.saveTranslation(key, "ataque", "ollama");
+
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT provider_id, strategy_version, sanitizer_version, validator_version, status FROM translations WHERE original='" + key.asStorageKey() + "'")) {
+            assertTrue(rs.next());
+            assertEquals("ollama", rs.getString("provider_id"));
+            assertEquals("translator-v1", rs.getString("strategy_version"));
+            assertEquals("sanitizer-v1", rs.getString("sanitizer_version"));
+            assertEquals("validator-v1", rs.getString("validator_version"));
+            assertEquals("active", rs.getString("status"));
+        }
+    }
+
+    @Test
+    void invalidatesEntriesByStrategyVersion() {
+        Path dbPath = tempDir.resolve("cache.db");
+        TranslationCacheRepository repository = new TranslationCacheRepository(dbPath.toString(), 1000, 2);
+
+        TranslationCacheKey v1 = new TranslationCacheKey("attack", "Spanish", "gemma3:1b", "translator-v1", "sanitizer-v1", "validator-v1");
+        TranslationCacheKey v2 = new TranslationCacheKey("attack", "Spanish", "gemma3:1b", "translator-v2", "sanitizer-v1", "validator-v1");
+        repository.saveTranslation(v1, "ataque-v1", "ollama");
+        repository.saveTranslation(v2, "ataque-v2", "ollama");
+
+        int invalidated = repository.invalidateByStrategyVersion("translator-v1");
+        assertEquals(1, invalidated);
+        assertTrue(repository.findTranslation(v1).isEmpty());
+        assertEquals("ataque-v2", repository.findTranslation(v2).orElse(""));
+    }
+
+    @Test
+    void invalidatesAllEntries() {
+        Path dbPath = tempDir.resolve("cache.db");
+        TranslationCacheRepository repository = new TranslationCacheRepository(dbPath.toString(), 1000, 2);
+
+        TranslationCacheKey keyA = new TranslationCacheKey("a", "Spanish", "gemma3:1b", "translator-v1", "sanitizer-v1", "validator-v1");
+        TranslationCacheKey keyB = new TranslationCacheKey("b", "Spanish", "gemma3:1b", "translator-v1", "sanitizer-v1", "validator-v1");
+        repository.saveTranslation(keyA, "A", "ollama");
+        repository.saveTranslation(keyB, "B", "ollama");
+
+        int invalidated = repository.invalidateAll();
+        assertEquals(2, invalidated);
+        assertTrue(repository.findTranslation(keyA).isEmpty());
+        assertTrue(repository.findTranslation(keyB).isEmpty());
     }
 }

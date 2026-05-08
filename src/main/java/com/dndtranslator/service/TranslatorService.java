@@ -253,7 +253,7 @@ public class TranslatorService {
         }
 
         if (!Thread.currentThread().isInterrupted() && cacheable && !translatedFull.isBlank()) {
-            cacheRepository.saveTranslation(cacheKey, translatedFull);
+            cacheRepository.saveTranslation(cacheKey, translatedFull, "ollama");
             logger.info("event=cache_store model={} keyVersioned={} translatedLength={}",
                     model, cacheKey.isVersionedMetadataPresent(), translatedFull.length());
         }
