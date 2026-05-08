@@ -1,5 +1,6 @@
 package com.dndtranslator.service;
 
+import com.dndtranslator.config.SystemConstants;
 import com.dndtranslator.model.TextBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +9,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -18,10 +20,12 @@ public class TranslatorService {
 
     private static final Logger logger = LoggerFactory.getLogger(TranslatorService.class);
 
-    private static final int SINGLE_THREAD = 1;
-    private static final int RETRY_COUNT = 2;
-    private static final String TRANSLATION_STRATEGY_VERSION = "translator-v1";
-    private static final String UNKNOWN_MODEL = "unknown";
+    private static final int SINGLE_THREAD = SystemConstants.SINGLE_THREAD_EXECUTOR;
+    private static final int RETRY_COUNT = SystemConstants.RETRY_COUNT_DEFAULT;
+    private static final String TRANSLATION_STRATEGY_VERSION = SystemConstants.TRANSLATION_STRATEGY_VERSION;
+    private static final String SANITIZER_VERSION = SystemConstants.SANITIZER_VERSION;
+    private static final String VALIDATOR_VERSION = SystemConstants.VALIDATOR_VERSION;
+    private static final String UNKNOWN_MODEL = SystemConstants.UNKNOWN_MODEL;
 
     private final int maxThreads;
     private final OllamaClient ollamaClient;
@@ -213,7 +217,6 @@ public class TranslatorService {
             logger.warn("Ningun modelo Ollama disponible. Ejecute 'ollama serve'.");
             return "[Error: Ollama no disponible]";
         }
-
         TranslationCacheKey cacheKey = buildCacheKey(text, targetLanguage, model);
         Optional<String> modelCached = cacheRepository.findTranslation(cacheKey);
         if (modelCached.isPresent()) {
@@ -223,6 +226,8 @@ public class TranslatorService {
         String retryModel = modelResolver.resolveRetryModel(availableModels, model);
 
         List<String> segments = segmenter.segment(text);
+        logger.info("event=translate_start model={} targetLanguage={} segmentCount={} textLength={}",
+                model, targetLanguage, segments.size(), text.length());
         StringBuilder translatedTotal = new StringBuilder();
         boolean cacheable = true;
 
@@ -249,6 +254,8 @@ public class TranslatorService {
 
         if (!Thread.currentThread().isInterrupted() && cacheable && !translatedFull.isBlank()) {
             cacheRepository.saveTranslation(cacheKey, translatedFull);
+            logger.info("event=cache_store model={} keyVersioned={} translatedLength={}",
+                    model, cacheKey.isVersionedMetadataPresent(), translatedFull.length());
         }
         return translatedFull;
     }
@@ -257,13 +264,16 @@ public class TranslatorService {
         String currentModel = model;
         String bestSanitized = "";
         List<String> issues = new ArrayList<>();
+        PromptBuilder.ContentType contentType = classifyContentType(text);
 
         int maxAttempts = translationRetryPolicy.maxAttempts();
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 String prompt = attempt > 1
-                        ? promptBuilder.buildRetryPrompt(text, targetLanguage)
-                        : promptBuilder.buildTranslationPrompt(text, targetLanguage);
+                        ? promptBuilder.buildRetryPrompt(text, targetLanguage, contentType)
+                        : promptBuilder.buildPromptForType(text, targetLanguage, contentType);
+                logger.info("event=segment_attempt model={} attempt={} contentType={} promptLength={}",
+                        currentModel, attempt, contentType, prompt.length());
                 String rawResponse = ollamaClient.translate(currentModel, prompt);
                 String sanitized = outputSanitizer.sanitize(rawResponse);
                 TranslationValidationResult validation = translationValidator.validate(text, sanitized);
@@ -273,6 +283,8 @@ public class TranslatorService {
                 }
 
                 if (validation.valid()) {
+                    logger.info("event=segment_success model={} attempt={} contentType={} length={}",
+                            currentModel, attempt, contentType, sanitized.length());
                     return new SegmentTranslationResult(sanitized, true);
                 }
 
@@ -308,6 +320,51 @@ public class TranslatorService {
         return new SegmentTranslationResult(text, false);
     }
 
+    private PromptBuilder.ContentType classifyContentType(String text) {
+        if (text == null || text.isBlank()) {
+            return PromptBuilder.ContentType.NARRATIVE;
+        }
+
+        String normalized = text.toLowerCase(Locale.ROOT);
+        if (looksLikeLegalText(normalized)) {
+            return PromptBuilder.ContentType.LEGAL;
+        }
+        if (looksLikeStructuredLine(normalized, text)) {
+            return PromptBuilder.ContentType.STRUCTURED;
+        }
+        if (looksLikeMapLabel(normalized)) {
+            return PromptBuilder.ContentType.MAP_LABEL;
+        }
+        return PromptBuilder.ContentType.NARRATIVE;
+    }
+
+    private boolean looksLikeLegalText(String normalized) {
+        return normalized.contains("copyright")
+                || normalized.contains("all rights reserved")
+                || normalized.contains("license")
+                || normalized.contains("terms of use")
+                || normalized.contains("disclaimer")
+                || normalized.contains("©");
+    }
+
+    private boolean looksLikeStructuredLine(String normalized, String original) {
+        if (normalized.contains("....") || normalized.matches(".*\\.{2,}\\s*\\d{1,4}\\s*$")) {
+            return true;
+        }
+        return original.matches("(?m)^\\s*[\\p{L}\\p{N} ,:;.'-]{3,}\\s+\\d{1,4}\\s*$");
+    }
+
+    private boolean looksLikeMapLabel(String normalized) {
+        return normalized.contains("map")
+                || normalized.contains("sector")
+                || normalized.contains("region")
+                || normalized.contains("north")
+                || normalized.contains("south")
+                || normalized.contains("east")
+                || normalized.contains("west")
+                || normalized.contains("hex");
+    }
+
     private String resolveModel(List<String> availableModels) {
         if (availableModels == null || availableModels.isEmpty()) {
             return null;
@@ -330,7 +387,9 @@ public class TranslatorService {
                 sourceText,
                 targetLanguage,
                 modelName,
-                TRANSLATION_STRATEGY_VERSION
+                TRANSLATION_STRATEGY_VERSION,
+                SANITIZER_VERSION,
+                VALIDATOR_VERSION
         );
     }
 

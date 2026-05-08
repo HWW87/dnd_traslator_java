@@ -10,6 +10,8 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
 
     private static final float MIN_BOX_WIDTH = 120f;
     private static final float MIN_BOX_HEIGHT = 40f;
+    private static final float MIN_BOX_HEIGHT_INDEX = 28f;
+    private static final float MIN_BOX_HEIGHT_TABLE = 34f;
     private static final float DOMINANT_VISUAL_MIN_PAGE_RATIO = 0.18f;
 
     public TableOrIndexLayoutStrategy(PageLayoutBuilder pageLayoutBuilder) {
@@ -19,7 +21,10 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
     @Override
     public void renderPage(PageRenderContext context) {
         PageMeta meta = context.getPageMeta();
+        PageAnalysisData analysisData = context.getAnalysisData();
         StrategyMargins margins = resolveMargins(meta, TABLE_INDEX_MIN_MARGIN, TABLE_INDEX_MIN_MARGIN);
+        float minBoxHeight = resolveMinBoxHeight(analysisData);
+        boolean indexDense = isIndexDense(analysisData);
 
         List<BlockedRegion> blockedRegions = toBlockedRegions(context.getPageImages());
         List<LayoutBox> boxes = new ArrayList<>();
@@ -79,10 +84,12 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
                 mainVisual.height()
         );
 
-        addIfValid(boxes, topBox);
-        addIfValid(boxes, bottomBox);
-        addIfValid(boxes, leftBox);
-        addIfValid(boxes, rightBox);
+        addIfValid(boxes, topBox, minBoxHeight);
+        addIfValid(boxes, bottomBox, minBoxHeight);
+        if (!indexDense) {
+            addIfValid(boxes, leftBox, minBoxHeight);
+            addIfValid(boxes, rightBox, minBoxHeight);
+        }
 
         if (boxes.isEmpty()) {
             boxes.add(buildFullFlowBox(meta, margins));
@@ -100,10 +107,42 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
         );
     }
 
-    private void addIfValid(List<LayoutBox> boxes, LayoutBox box) {
-        if (box.width() >= MIN_BOX_WIDTH && box.height() >= MIN_BOX_HEIGHT) {
+    private void addIfValid(List<LayoutBox> boxes, LayoutBox box, float minBoxHeight) {
+        if (box.width() >= MIN_BOX_WIDTH && box.height() >= minBoxHeight) {
             boxes.add(box);
         }
+    }
+
+    private float resolveMinBoxHeight(PageAnalysisData data) {
+        if (isIndexDense(data)) {
+            return MIN_BOX_HEIGHT_INDEX;
+        }
+        if (isTableDense(data)) {
+            return MIN_BOX_HEIGHT_TABLE;
+        }
+        return MIN_BOX_HEIGHT;
+    }
+
+    private boolean isIndexDense(PageAnalysisData data) {
+        if (data == null) {
+            return false;
+        }
+        int safeLineCount = Math.max(1, data.lineCount());
+        float shortLineRatio = (float) data.shortLineCount() / safeLineCount;
+        return (data.hasIndexLikePatterns() || data.hasDottedLeaderPatterns())
+                && data.shortLineCount() >= 10
+                && shortLineRatio >= 0.55f;
+    }
+
+    private boolean isTableDense(PageAnalysisData data) {
+        if (data == null) {
+            return false;
+        }
+        int safeLineCount = Math.max(1, data.lineCount());
+        float numericRatio = (float) Math.max(0, data.shortLineCount() - data.longLineCount()) / safeLineCount;
+        return (data.hasManyNumericLines() || data.hasTableLikePatterns())
+                && data.textBlockCount() >= 4
+                && numericRatio >= 0.30f;
     }
 
     private boolean isDominantVisual(BlockedRegion visual, PageMeta meta) {

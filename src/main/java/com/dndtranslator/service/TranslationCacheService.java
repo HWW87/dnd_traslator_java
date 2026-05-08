@@ -2,6 +2,17 @@ package com.dndtranslator.service;
 
 import java.sql.*;
 
+/**
+ * @deprecated Use {@link TranslationCacheRepository} instead.
+ *
+ * This class is a legacy implementation of translation caching.
+ * It has been superseded by TranslationCacheRepository which provides
+ * better integration with the domain model and workflow.
+ *
+ * Phase 0: Baseline Audit and Cleanup
+ * Target removal: Phase 3 or later
+ */
+@Deprecated(since = "1.0.1", forRemoval = true)
 public class TranslationCacheService {
     private final Connection conn;
 

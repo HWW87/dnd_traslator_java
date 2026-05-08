@@ -4,43 +4,73 @@ import com.dndtranslator.model.PageMeta;
 import com.dndtranslator.model.Paragraph;
 import org.junit.jupiter.api.Test;
 
+import java.awt.Color;
+import java.awt.image.BufferedImage;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PageAnalyzerTest {
 
-    private final PageAnalyzer analyzer = new PageAnalyzer();
-
     @Test
-    void analyzesWithDefaultPageSizeWhenMetaIsNull() {
-        Paragraph p = new Paragraph("Armor Class 15", 1, 20f, 700f, "Font", 12f);
+    void computesExpectedSignalsFromSimpleInputs() {
+        PageAnalyzer analyzer = new PageAnalyzer();
 
-        PageAnalysisData data = analyzer.analyze(1, null, List.of(), List.of(p));
+        PageMeta meta = new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f);
+        List<Paragraph> paragraphs = List.of(
+                new Paragraph("Map of the frontier zone", 1, 40f, 700f, "Font", 12f),
+                new Paragraph("Sector A 12", 1, 40f, 680f, "Font", 10f)
+        );
 
-        assertEquals(612f, data.pageWidth());
-        assertEquals(792f, data.pageHeight());
-        assertEquals(1, data.textBlockCount());
+        PdfImagePlacement image = new PdfImagePlacement(
+                1,
+                sampleImage(),
+                60f,
+                200f,
+                420f,
+                300f,
+                true,
+                "img-1",
+                "exact-bounding-box"
+        );
+
+        PageAnalysisData data = analyzer.analyze(1, meta, paragraphs, List.of(image));
+
+        assertTrue(data.imageCount() == 1);
+        assertTrue(data.estimatedImageAreaRatio() > 0.20f);
+        assertTrue(data.hasMapLikeKeywords());
+        assertTrue(data.wordCount() > 0);
+        assertTrue(data.lineCount() >= 2);
     }
 
     @Test
-    void detectsMapKeywordsFromOriginalTextAndIgnoresBlankBlocks() {
-        Paragraph blank = new Paragraph("   ", 2, 20f, 700f, "Font", 12f);
-        Paragraph map1 = new Paragraph("Mapa de zona norte", 2, 20f, 660f, "Font", 12f);
-        Paragraph map2 = new Paragraph("Sector cuadrante base", 2, 20f, 620f, "Font", 12f);
-        map1.setTranslatedText("translated without map words");
-        map2.setTranslatedText("translated without map words");
+    void detectsStructuredIndexTableSignalsFromLeadersAndColumns() {
+        PageAnalyzer analyzer = new PageAnalyzer();
 
-        PageAnalysisData data = analyzer.analyze(
-                2,
-                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
-                List.of(),
-                List.of(blank, map1, map2)
+        PageMeta meta = new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f);
+        List<Paragraph> paragraphs = List.of(
+                new Paragraph("Contents", 1, 40f, 760f, "Font", 12f),
+                new Paragraph("Chapter One .... 12\nChapter Two .... 24\nAC 15  HP 30", 1, 40f, 700f, "Font", 10f),
+                new Paragraph("DEX 14  CON 16\nINT 10  WIS 12", 1, 40f, 620f, "Font", 10f)
         );
 
-        assertEquals(2, data.textBlockCount());
-        assertTrue(data.hasMapLikeKeywords());
+        PageAnalysisData data = analyzer.analyze(1, meta, paragraphs, List.of());
+
+        assertTrue(data.hasIndexLikePatterns());
+        assertTrue(data.hasTableLikePatterns());
+        assertTrue(data.hasDottedLeaderPatterns());
+        assertTrue(data.shortLineCount() >= 4);
+        assertTrue(data.hasManyNumericLines());
+    }
+
+    private BufferedImage sampleImage() {
+        BufferedImage image = new BufferedImage(120, 80, BufferedImage.TYPE_INT_RGB);
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                image.setRGB(x, y, Color.GREEN.getRGB());
+            }
+        }
+        return image;
     }
 }
 

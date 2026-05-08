@@ -74,5 +74,29 @@ class TranslationValidatorTest {
         assertFalse(result.shouldRetry());
         assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("weak Spanish signal")));
     }
+
+    @Test
+    void blocksAssistantLeakageMarkers() {
+        TranslationValidationResult result = validator.validate(
+                "Armor Class 15",
+                "As a language model, I can help. Clase de Armadura 15"
+        );
+
+        assertFalse(result.valid());
+        assertTrue(result.shouldRetry());
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("assistant leakage")));
+    }
+
+    @Test
+    void blocksTildeMarkdownFences() {
+        TranslationValidationResult result = validator.validate(
+                "Armor Class 15",
+                "~~~spanish\nClase de Armadura 15\n~~~"
+        );
+
+        assertFalse(result.valid());
+        assertTrue(result.shouldRetry());
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("markdown fences")));
+    }
 }
 

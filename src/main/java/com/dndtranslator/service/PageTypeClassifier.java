@@ -104,8 +104,11 @@ public class PageTypeClassifier {
                 manyShortLines
                         && sparseLongLines
                         && data.textBlockCount() >= INDEX_MIN_TEXT_BLOCKS;
+        boolean explicitTableSignals = data.hasTableLikePatterns() && data.hasManyNumericLines();
+        boolean explicitIndexSignals = data.hasIndexLikePatterns() || data.hasDottedLeaderPatterns();
 
-        return data.hasIndexLikePatterns()
+        return explicitIndexSignals
+                || explicitTableSignals
                 || (manyShortLines && data.hasManyNumericLines() && sparseLongLines)
                 || repetitiveStructuredContent;
     }

@@ -299,6 +299,114 @@ class PageLayoutStrategyIntegrationTest {
     }
 
     @Test
+    void titleOrCoverUsesSmallerBoxWhenVisualDominantAndLowText() {
+        PageAnalysisData analysisData = new PageAnalysisData(
+                1, 600f, 800f, 1, 0.45f,
+                2, 3, 12, 2, 0,
+                true, false, false, false, false, false, true, true
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                1,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(),
+                List.of(new Paragraph("Title", 1, 40f, 700f, "Font", 18f)),
+                PageType.TITLE_OR_COVER,
+                analysisData
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.TITLE_OR_COVER);
+        strategy.renderPage(context);
+
+        LayoutBox box = context.getPageLayout().textBoxes().get(0);
+        assertTrue(box.height() <= 140f);
+    }
+
+    @Test
+    void titleOrCoverUsesUltraMinimalBandWhenUltraVisualCover() {
+        PageAnalysisData analysisData = new PageAnalysisData(
+                1, 600f, 800f, 1, 0.72f,
+                1, 2, 10, 2, 0,
+                true, false, false, false, false, false, true, true
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                1,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(),
+                List.of(new Paragraph("Title", 1, 40f, 700f, "Font", 18f)),
+                PageType.TITLE_OR_COVER,
+                analysisData
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.TITLE_OR_COVER);
+        strategy.renderPage(context);
+
+        LayoutBox box = context.getPageLayout().textBoxes().get(0);
+        assertTrue(box.height() <= 110f);
+    }
+
+    @Test
+    void titleOrCoverKeepsStandardMinimalBandWhenNotUltraVisual() {
+        PageAnalysisData analysisData = new PageAnalysisData(
+                1, 600f, 800f, 1, 0.42f,
+                3, 6, 52, 4, 1,
+                true, false, false, false, false, false, false, false
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                1,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(),
+                List.of(new Paragraph("Title", 1, 40f, 700f, "Font", 18f)),
+                PageType.TITLE_OR_COVER,
+                analysisData
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.TITLE_OR_COVER);
+        strategy.renderPage(context);
+
+        LayoutBox box = context.getPageLayout().textBoxes().get(0);
+        assertTrue(box.height() >= 120f);
+    }
+
+    @Test
+    void tableOrIndexWithIndexDenseDataAvoidsLateralFragmentation() {
+        PdfImagePlacement dominantVisual = new PdfImagePlacement(
+                3,
+                new BufferedImage(300, 400, BufferedImage.TYPE_INT_RGB),
+                150f,
+                180f,
+                300f,
+                400f,
+                true,
+                "index-art",
+                "exact"
+        );
+
+        PageAnalysisData analysisData = new PageAnalysisData(
+                3, 600f, 800f, 1, 0.25f,
+                8, 24, 90, 18, 1,
+                true, true, false, true, false, false
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                3,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(dominantVisual),
+                List.of(),
+                PageType.TABLE_OR_INDEX,
+                analysisData
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.TABLE_OR_INDEX);
+        strategy.renderPage(context);
+
+        assertNotNull(context.getPageLayout());
+        assertTrue(context.getPageLayout().textBoxes().size() <= 2);
+    }
+
+    @Test
     void unknownUsesStableFallbackLayout() {
         PageRenderContext context = new PageRenderContext(
                 5,
