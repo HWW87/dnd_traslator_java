@@ -1,0 +1,25 @@
+{
+  "id": "index-basic",
+  "pageMeta": {
+    "width": 600,
+    "height": 800,
+    "leftMargin": 24,
+    "topMargin": 24,
+    "pageNumber": 3,
+    "fontName": "Font",
+    "fontSize": 12
+  },
+  "paragraphs": [
+    {"text": "Contents", "x": 40, "y": 760, "fontName": "Font", "fontSize": 12},
+    {"text": "Chapter One .... 12\nChapter Two .... 24\nChapter Three .... 39", "x": 40, "y": 700, "fontName": "Font", "fontSize": 10}
+  ],
+  "images": [],
+  "expected": {
+    "pageType": "TABLE_OR_INDEX",
+    "signals": {
+      "hasIndexLikePatterns": true,
+      "hasDottedLeaderPatterns": true
+    }
+  }
+}
+

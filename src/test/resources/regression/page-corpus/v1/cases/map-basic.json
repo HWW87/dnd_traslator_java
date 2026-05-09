@@ -1,0 +1,27 @@
+{
+  "id": "map-basic",
+  "pageMeta": {
+    "width": 600,
+    "height": 800,
+    "leftMargin": 24,
+    "topMargin": 24,
+    "pageNumber": 5,
+    "fontName": "Font",
+    "fontSize": 12
+  },
+  "paragraphs": [
+    {"text": "Map of the frontier", "x": 40, "y": 740, "fontName": "Font", "fontSize": 12},
+    {"text": "North Ridge\nSouth Gate\nSector A\nSector B\nOld Ruins\nRiver Ford\nWatch Tower", "x": 40, "y": 680, "fontName": "Font", "fontSize": 10}
+  ],
+  "images": [
+    {"x": 100, "y": 160, "width": 380, "height": 420}
+  ],
+  "expected": {
+    "pageType": "MAP_PAGE",
+    "signals": {
+      "hasMapLikeKeywords": true,
+      "hasLargeImage": true
+    }
+  }
+}
+

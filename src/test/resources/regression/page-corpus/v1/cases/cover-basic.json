@@ -1,0 +1,27 @@
+{
+  "id": "cover-basic",
+  "pageMeta": {
+    "width": 600,
+    "height": 800,
+    "leftMargin": 24,
+    "topMargin": 24,
+    "pageNumber": 1,
+    "fontName": "Font",
+    "fontSize": 12
+  },
+  "paragraphs": [
+    {"text": "Chapter One", "x": 40, "y": 710, "fontName": "Font", "fontSize": 18}
+  ],
+  "images": [
+    {"x": 80, "y": 140, "width": 440, "height": 520}
+  ],
+  "expected": {
+    "pageType": "TITLE_OR_COVER",
+    "signals": {
+      "hasTitleLikePatterns": true,
+      "hasVeryLowTextDensity": true,
+      "hasLargeImage": true
+    }
+  }
+}
+
