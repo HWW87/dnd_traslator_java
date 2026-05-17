@@ -2,6 +2,7 @@ package com.dndtranslator.service.workflow;
 
 import com.dndtranslator.domain.JobState;
 import com.dndtranslator.domain.TranslationJob;
+import com.dndtranslator.domain.TranslationUnit;
 import com.dndtranslator.model.PageMeta;
 import com.dndtranslator.model.Paragraph;
 import com.dndtranslator.service.PdfExtractorService;
@@ -32,6 +33,7 @@ public class TranslationCoordinatorService {
     private final TextSanitizer textSanitizer;
     private final GlossaryService glossaryService;
     private final ParagraphTranslationExecutor paragraphTranslationExecutor;
+    private final ParagraphToUnitConverter paragraphToUnitConverter;
     private final TranslatorGateway translatorGateway;
     private final PdfRebuilderGateway pdfRebuilderGateway;
     private final EmbeddedExtractor embeddedExtractor;
@@ -164,6 +166,7 @@ public class TranslationCoordinatorService {
         this.textSanitizer = textSanitizer;
         this.glossaryService = glossaryService;
         this.paragraphTranslationExecutor = paragraphTranslationExecutor;
+        this.paragraphToUnitConverter = new ParagraphToUnitConverter();
         this.translatorGateway = translatorGateway;
         this.pdfRebuilderGateway = pdfRebuilderGateway;
         this.embeddedExtractor = embeddedExtractor;
@@ -332,14 +335,58 @@ public class TranslationCoordinatorService {
             String targetLanguage,
             TranslationEventListener listener
     ) throws InterruptedException, ExecutionException {
-        paragraphTranslationExecutor.translate(
-                paragraphs,
-                targetLanguage,
-                textSanitizer,
-                glossaryService,
-                translatorGateway,
-                listener
-        );
+        List<TranslationUnitExecution> executions = buildUnitExecutions(paragraphs, targetLanguage);
+        listener.onLog("Traduccion secuencial de unidades habilitada con 1 hilo.");
+
+        int total = executions.size();
+        int completed = 0;
+        while (completed < total) {
+            checkStopRequested(listener);
+            waitWhilePaused(listener);
+
+            TranslationUnitExecution execution = executions.get(completed);
+            try {
+                translateExecution(execution);
+            } catch (CancellationException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new ExecutionException(e);
+            }
+
+            completed++;
+            listener.onProgress(new TranslationProgress(completed, total));
+            listener.onLog("Traducida unidad " + completed + "/" + total);
+        }
+    }
+
+    private List<TranslationUnitExecution> buildUnitExecutions(List<Paragraph> paragraphs, String targetLanguage) {
+        List<TranslationUnit> units = paragraphToUnitConverter.convert(paragraphs, targetLanguage);
+        List<TranslationUnitExecution> executions = new java.util.ArrayList<>();
+        int size = Math.min(paragraphs.size(), units.size());
+        for (int i = 0; i < size; i++) {
+            executions.add(new TranslationUnitExecution(paragraphs.get(i), units.get(i)));
+        }
+        return executions;
+    }
+
+    private void translateExecution(TranslationUnitExecution execution) {
+        TranslationUnit unit = execution.unit();
+        Paragraph paragraph = execution.paragraph();
+
+        String sanitized = textSanitizer.sanitizeForTranslation(unit.getSourceText());
+        GlossaryService.GlossaryApplication application = glossaryService.applyBeforeTranslation(sanitized);
+        String translated = translatorGateway.translate(application.text(), unit.getTargetLanguage());
+        String restored = glossaryService.applyAfterTranslation(translated, application);
+
+        unit.markTranslated(restored);
+        paragraph.setTranslatedText(unit.getTranslatedText());
+    }
+
+    private void waitWhilePaused(TranslationEventListener listener) throws InterruptedException {
+        while (listener.isPaused()) {
+            checkStopRequested(listener);
+            Thread.sleep(200);
+        }
     }
 
     private void checkStopRequested(TranslationEventListener listener) {
@@ -605,6 +652,9 @@ public class TranslationCoordinatorService {
     }
 
     public record TranslationExecutionOutcome(TranslationResult result, TranslationJob job) {
+    }
+
+    private record TranslationUnitExecution(Paragraph paragraph, TranslationUnit unit) {
     }
 
     @FunctionalInterface
