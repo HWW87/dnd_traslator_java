@@ -63,7 +63,7 @@ public class TranslationCacheRepository {
 
         try (Connection conn = openConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT translated FROM translations WHERE original = ?")) {
+                     "SELECT translated FROM translations WHERE original = ? AND (invalidated_at IS NULL OR invalidated_at = '')")) {
             ps.setString(1, key);
             ResultSet rs = ps.executeQuery();
             if (rs.next()) {
@@ -80,7 +80,14 @@ public class TranslationCacheRepository {
         if (key == null) {
             return;
         }
-        saveTranslation(key.asStorageKey(), translatedText, key.modelName());
+        saveTranslation(key.asStorageKey(), translatedText, key.modelName(), CacheMetadata.fromKey(key, "unknown"));
+    }
+
+    public void saveTranslation(TranslationCacheKey key, String translatedText, String providerId) {
+        if (key == null) {
+            return;
+        }
+        saveTranslation(key.asStorageKey(), translatedText, key.modelName(), CacheMetadata.fromKey(key, providerId));
     }
 
     public void saveTranslation(String key, String translatedText) {
@@ -88,6 +95,10 @@ public class TranslationCacheRepository {
     }
 
     public void saveTranslation(String key, String translatedText, String model) {
+        saveTranslation(key, translatedText, model, null);
+    }
+
+    public void saveTranslation(String key, String translatedText, String model, CacheMetadata metadata) {
         if (key == null || key.isBlank() || translatedText == null || translatedText.isBlank()) {
             return;
         }
@@ -97,11 +108,31 @@ public class TranslationCacheRepository {
             for (int attempt = 1; attempt <= writeRetries; attempt++) {
                 try (Connection conn = openConnection();
                      PreparedStatement ps = conn.prepareStatement(
-                             "INSERT OR IGNORE INTO translations(original, translated, model, created_at) VALUES (?, ?, ?, ?)")) {
+                             """
+                             INSERT OR REPLACE INTO translations(
+                                 original, translated, model, created_at,
+                                 provider_id, strategy_version, sanitizer_version, validator_version,
+                                 status, confidence, invalidated_at
+                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                             """)) {
+                    CacheMetadata effectiveMetadata = metadata == null
+                            ? new CacheMetadata("unknown", "unknown", "unknown", "unknown", "active", null, LocalDateTime.now().toString())
+                            : metadata;
+
                     ps.setString(1, key);
                     ps.setString(2, translatedText);
                     ps.setString(3, model == null || model.isBlank() ? "unknown" : model);
-                    ps.setString(4, LocalDateTime.now().toString());
+                    ps.setString(4, effectiveMetadata.createdAt());
+                    ps.setString(5, effectiveMetadata.providerId());
+                    ps.setString(6, effectiveMetadata.strategyVersion());
+                    ps.setString(7, effectiveMetadata.sanitizerVersion());
+                    ps.setString(8, effectiveMetadata.validatorVersion());
+                    ps.setString(9, effectiveMetadata.status());
+                    if (effectiveMetadata.confidence() == null) {
+                        ps.setNull(10, java.sql.Types.REAL);
+                    } else {
+                        ps.setDouble(10, effectiveMetadata.confidence());
+                    }
                     ps.executeUpdate();
                     return;
                 } catch (SQLException e) {
@@ -132,11 +163,66 @@ public class TranslationCacheRepository {
                     original TEXT UNIQUE,
                     translated TEXT,
                     model TEXT,
-                    created_at TEXT
+                    created_at TEXT,
+                    provider_id TEXT,
+                    strategy_version TEXT,
+                    sanitizer_version TEXT,
+                    validator_version TEXT,
+                    status TEXT,
+                    confidence REAL,
+                    invalidated_at TEXT
                 )
             """);
+            ensureColumn(stmt, "translations", "provider_id", "TEXT");
+            ensureColumn(stmt, "translations", "strategy_version", "TEXT");
+            ensureColumn(stmt, "translations", "sanitizer_version", "TEXT");
+            ensureColumn(stmt, "translations", "validator_version", "TEXT");
+            ensureColumn(stmt, "translations", "status", "TEXT");
+            ensureColumn(stmt, "translations", "confidence", "REAL");
+            ensureColumn(stmt, "translations", "invalidated_at", "TEXT");
         } catch (SQLException e) {
             logger.error("Error creando cache DB: {}", e.getMessage());
+        }
+    }
+
+    public int invalidateByStrategyVersion(String strategyVersion) {
+        if (strategyVersion == null || strategyVersion.isBlank()) {
+            return 0;
+        }
+        return invalidateWhere("strategy_version = ?", strategyVersion.trim().toLowerCase(Locale.ROOT));
+    }
+
+    public int invalidateLegacyEntries() {
+        return invalidateWhere("(strategy_version IS NULL OR strategy_version = '' OR strategy_version = 'unknown')");
+    }
+
+    public int invalidateAll() {
+        return invalidateWhere("1 = 1");
+    }
+
+    private int invalidateWhere(String whereClause, String... params) {
+        writeLock.lock();
+        try (Connection conn = openConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE translations SET invalidated_at = ? WHERE (invalidated_at IS NULL OR invalidated_at = '') AND " + whereClause)) {
+            ps.setString(1, LocalDateTime.now().toString());
+            for (int i = 0; i < params.length; i++) {
+                ps.setString(i + 2, params[i]);
+            }
+            return ps.executeUpdate();
+        } catch (SQLException e) {
+            logger.warn("No se pudo invalidar cache: {}", e.getMessage());
+            return 0;
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    private void ensureColumn(Statement stmt, String tableName, String columnName, String columnType) {
+        try {
+            stmt.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnType);
+        } catch (SQLException ignored) {
+            // Columna ya existe o DB antigua no requiere cambio.
         }
     }
 

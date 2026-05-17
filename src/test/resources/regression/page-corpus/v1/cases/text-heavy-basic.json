@@ -1,0 +1,31 @@
+{
+  "id": "text-heavy-basic",
+  "pageMeta": {
+    "width": 600,
+    "height": 800,
+    "leftMargin": 24,
+    "topMargin": 24,
+    "pageNumber": 7,
+    "fontName": "Font",
+    "fontSize": 12
+  },
+  "paragraphs": [
+    {"text": "This is a long narrative paragraph about the forgotten catacombs and the lore of the ancient kings. It contains many words and continuous prose to simulate body text.", "x": 40, "y": 740, "fontName": "Font", "fontSize": 11},
+    {"text": "Another paragraph continues describing encounters, hazards, and tactical notes for the dungeon master, maintaining dense prose and multi-sentence flow for classifier stress.", "x": 40, "y": 680, "fontName": "Font", "fontSize": 11},
+    {"text": "A final paragraph closes the section with rich detail and extended text so the page clearly exceeds the threshold expected for text-heavy classification in regression tests.", "x": 40, "y": 620, "fontName": "Font", "fontSize": 11},
+    {"text": "The narrator then explores the origin of the fortress, the rites once performed in its halls, and the motives of the surviving cultists who still guard the lower vaults.", "x": 40, "y": 560, "fontName": "Font", "fontSize": 11},
+    {"text": "Detailed boxed guidance explains pacing, encounter balance, environmental hazards, and options for scaling danger according to party level and available resources.", "x": 40, "y": 500, "fontName": "Font", "fontSize": 11},
+    {"text": "Additional lore notes include timeline fragments, witness accounts, conflicting records, and long-form descriptions that intentionally keep the prose dense and continuous.", "x": 40, "y": 440, "fontName": "Font", "fontSize": 11},
+    {"text": "Design notes discuss alternate hooks, faction reactions, and adaptive consequences that unfold over multiple sessions, with emphasis on continuity and narrative cohesion.", "x": 40, "y": 380, "fontName": "Font", "fontSize": 11},
+    {"text": "Encounter scripting provides tactical movement suggestions, terrain interactions, and optional complications intended for experienced tables that favor strategic combat.", "x": 40, "y": 320, "fontName": "Font", "fontSize": 11},
+    {"text": "Closing recommendations summarize post-adventure outcomes, campaign integration paths, and long-range storytelling implications in sustained descriptive prose.", "x": 40, "y": 260, "fontName": "Font", "fontSize": 11}
+  ],
+  "images": [],
+  "expected": {
+    "pageType": "TEXT_HEAVY",
+    "signals": {
+      "hasVeryLowTextDensity": false
+    }
+  }
+}
+

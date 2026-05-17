@@ -1,0 +1,25 @@
+{
+  "id": "table-basic",
+  "pageMeta": {
+    "width": 600,
+    "height": 800,
+    "leftMargin": 24,
+    "topMargin": 24,
+    "pageNumber": 4,
+    "fontName": "Font",
+    "fontSize": 12
+  },
+  "paragraphs": [
+    {"text": "AC 15  HP 30\nDEX 14  CON 16\nINT 10  WIS 12", "x": 40, "y": 700, "fontName": "Font", "fontSize": 10},
+    {"text": "CR 2  XP 450", "x": 40, "y": 620, "fontName": "Font", "fontSize": 10}
+  ],
+  "images": [],
+  "expected": {
+    "pageType": "TABLE_OR_INDEX",
+    "signals": {
+      "hasTableLikePatterns": true,
+      "hasManyNumericLines": true
+    }
+  }
+}
+

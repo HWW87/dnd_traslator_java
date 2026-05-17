@@ -1,20 +1,26 @@
 package com.dndtranslator.service;
 
 import com.dndtranslator.config.SystemConstants;
+import com.dndtranslator.domain.ProviderResponse;
+import com.dndtranslator.domain.TranslationProvider;
+import com.dndtranslator.domain.TranslationUnit;
+import com.dndtranslator.domain.UnitType;
+import com.dndtranslator.domain.exceptions.TranslationProviderException;
+import com.dndtranslator.infrastructure.OllamaTranslationProvider;
 import com.dndtranslator.model.TextBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Objects;
 
 /**
  * Servicio de traduccion de alto nivel.
- * Orquesta segmentacion, cache, seleccion de modelo y cliente de Ollama.
+ * Orquesta segmentacion, cache, seleccion de modelo y provider de traduccion.
  */
 public class TranslatorService {
 
@@ -28,7 +34,7 @@ public class TranslatorService {
     private static final String UNKNOWN_MODEL = SystemConstants.UNKNOWN_MODEL;
 
     private final int maxThreads;
-    private final OllamaClient ollamaClient;
+    private final TranslationProvider translationProvider;
     private final TranslationCacheRepository cacheRepository;
     private final TranslationSegmenter segmenter;
     private final ModelResolver modelResolver;
@@ -39,7 +45,7 @@ public class TranslatorService {
 
     public TranslatorService() {
         this(
-                new OllamaClient(),
+                new OllamaTranslationProvider(),
                 new TranslationCacheRepository(),
                 new TranslationSegmenter(),
                 new ModelResolver(),
@@ -52,18 +58,80 @@ public class TranslatorService {
     }
 
     public TranslatorService(
-            OllamaClient ollamaClient,
+            TranslationProvider translationProvider,
             TranslationCacheRepository cacheRepository,
             TranslationSegmenter segmenter,
             ModelResolver modelResolver
     ) {
         this(
-                ollamaClient,
+                translationProvider,
                 cacheRepository,
                 segmenter,
                 modelResolver,
                 new TranslationOutputSanitizer(),
                 new TranslationValidator(),
+                new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
+                SINGLE_THREAD
+        );
+    }
+
+    public TranslatorService(
+            TranslationProvider translationProvider,
+            TranslationCacheRepository cacheRepository,
+            TranslationSegmenter segmenter,
+            ModelResolver modelResolver,
+            int maxThreads
+    ) {
+        this(
+                translationProvider,
+                cacheRepository,
+                segmenter,
+                modelResolver,
+                new TranslationOutputSanitizer(),
+                new TranslationValidator(),
+                new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
+                maxThreads
+        );
+    }
+
+    public TranslatorService(
+            OllamaClient ollamaClient,
+            TranslationCacheRepository cacheRepository,
+            TranslationSegmenter segmenter,
+            ModelResolver modelResolver
+    ) {
+        this(new OllamaTranslationProvider(ollamaClient), cacheRepository, segmenter, modelResolver);
+    }
+
+    public TranslatorService(
+            OllamaClient ollamaClient,
+            TranslationCacheRepository cacheRepository,
+            TranslationSegmenter segmenter,
+            ModelResolver modelResolver,
+            int maxThreads
+    ) {
+        this(new OllamaTranslationProvider(ollamaClient), cacheRepository, segmenter, modelResolver, maxThreads);
+    }
+
+    public TranslatorService(
+            TranslationProvider translationProvider,
+            TranslationCacheRepository cacheRepository,
+            TranslationSegmenter segmenter,
+            ModelResolver modelResolver,
+            TranslationOutputSanitizer outputSanitizer,
+            TranslationValidator translationValidator
+    ) {
+        this(
+                translationProvider,
+                cacheRepository,
+                segmenter,
+                modelResolver,
+                outputSanitizer,
+                translationValidator,
+                new PromptBuilder(),
+                new TranslationRetryPolicy(RETRY_COUNT),
                 SINGLE_THREAD
         );
     }
@@ -76,43 +144,11 @@ public class TranslatorService {
             TranslationOutputSanitizer outputSanitizer,
             TranslationValidator translationValidator
     ) {
-        this(
-                ollamaClient,
-                cacheRepository,
-                segmenter,
-                modelResolver,
-                outputSanitizer,
-                translationValidator,
-                new PromptBuilder(),
-                new TranslationRetryPolicy(RETRY_COUNT),
-                SINGLE_THREAD
-        );
+        this(new OllamaTranslationProvider(ollamaClient), cacheRepository, segmenter, modelResolver, outputSanitizer, translationValidator);
     }
 
-    TranslatorService(
-            OllamaClient ollamaClient,
-            TranslationCacheRepository cacheRepository,
-            TranslationSegmenter segmenter,
-            ModelResolver modelResolver,
-            TranslationOutputSanitizer outputSanitizer,
-            TranslationValidator translationValidator,
-            int maxThreads
-    ) {
-        this(
-                ollamaClient,
-                cacheRepository,
-                segmenter,
-                modelResolver,
-                outputSanitizer,
-                translationValidator,
-                new PromptBuilder(),
-                new TranslationRetryPolicy(RETRY_COUNT),
-                maxThreads
-        );
-    }
-
-    TranslatorService(
-            OllamaClient ollamaClient,
+    private TranslatorService(
+            TranslationProvider translationProvider,
             TranslationCacheRepository cacheRepository,
             TranslationSegmenter segmenter,
             ModelResolver modelResolver,
@@ -122,14 +158,14 @@ public class TranslatorService {
             TranslationRetryPolicy translationRetryPolicy,
             int maxThreads
     ) {
-        this.ollamaClient = ollamaClient;
-        this.cacheRepository = cacheRepository;
-        this.segmenter = segmenter;
-        this.modelResolver = modelResolver;
-        this.outputSanitizer = outputSanitizer;
-        this.translationValidator = translationValidator;
-        this.promptBuilder = promptBuilder;
-        this.translationRetryPolicy = translationRetryPolicy;
+        this.translationProvider = Objects.requireNonNull(translationProvider, "translationProvider no puede ser null");
+        this.cacheRepository = Objects.requireNonNull(cacheRepository, "cacheRepository no puede ser null");
+        this.segmenter = Objects.requireNonNull(segmenter, "segmenter no puede ser null");
+        this.modelResolver = Objects.requireNonNull(modelResolver, "modelResolver no puede ser null");
+        this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer no puede ser null");
+        this.translationValidator = Objects.requireNonNull(translationValidator, "translationValidator no puede ser null");
+        this.promptBuilder = Objects.requireNonNull(promptBuilder, "promptBuilder no puede ser null");
+        this.translationRetryPolicy = Objects.requireNonNull(translationRetryPolicy, "translationRetryPolicy no puede ser null");
         this.maxThreads = SINGLE_THREAD;
         if (maxThreads > SINGLE_THREAD) {
             logger.info("Se solicito concurrencia ({} hilos), pero se fuerza modo secuencial de 1 hilo.", maxThreads);
@@ -137,25 +173,6 @@ public class TranslatorService {
         logger.info("TranslatorService iniciado en modo secuencial con {} hilo.", this.maxThreads);
     }
 
-    TranslatorService(
-            OllamaClient ollamaClient,
-            TranslationCacheRepository cacheRepository,
-            TranslationSegmenter segmenter,
-            ModelResolver modelResolver,
-            int maxThreads
-    ) {
-        this(
-                ollamaClient,
-                cacheRepository,
-                segmenter,
-                modelResolver,
-                new TranslationOutputSanitizer(),
-                new TranslationValidator(),
-                new PromptBuilder(),
-                new TranslationRetryPolicy(RETRY_COUNT),
-                maxThreads
-        );
-    }
 
     // ===========================================================
     // 🔹 Traducción secuencial de bloques
@@ -211,10 +228,16 @@ public class TranslatorService {
             return cached.get();
         }
 
-        List<String> availableModels = ollamaClient.fetchAvailableModels();
+        List<String> availableModels;
+        try {
+            availableModels = translationProvider.fetchAvailableModels();
+        } catch (TranslationProviderException e) {
+            logger.warn("No se pudieron obtener modelos del provider {}: {}", translationProvider.getProviderId(), e.getMessage());
+            return "[Error: Ollama no disponible]";
+        }
         String model = resolveModel(availableModels);
         if (model == null) {
-            logger.warn("Ningun modelo Ollama disponible. Ejecute 'ollama serve'.");
+            logger.warn("Ningun modelo disponible en el provider {}.", translationProvider.getProviderId());
             return "[Error: Ollama no disponible]";
         }
         TranslationCacheKey cacheKey = buildCacheKey(text, targetLanguage, model);
@@ -253,9 +276,9 @@ public class TranslatorService {
         }
 
         if (!Thread.currentThread().isInterrupted() && cacheable && !translatedFull.isBlank()) {
-            cacheRepository.saveTranslation(cacheKey, translatedFull);
-            logger.info("event=cache_store model={} keyVersioned={} translatedLength={}",
-                    model, cacheKey.isVersionedMetadataPresent(), translatedFull.length());
+            cacheRepository.saveTranslation(cacheKey, translatedFull, translationProvider.getProviderId());
+            logger.info("event=cache_store provider={} model={} keyVersioned={} translatedLength={}",
+                    translationProvider.getProviderId(), model, cacheKey.isVersionedMetadataPresent(), translatedFull.length());
         }
         return translatedFull;
     }
@@ -274,7 +297,25 @@ public class TranslatorService {
                         : promptBuilder.buildPromptForType(text, targetLanguage, contentType);
                 logger.info("event=segment_attempt model={} attempt={} contentType={} promptLength={}",
                         currentModel, attempt, contentType, prompt.length());
-                String rawResponse = ollamaClient.translate(currentModel, prompt);
+                ProviderResponse providerResponse = translationProvider.translate(text, targetLanguage, currentModel, prompt);
+                String rawResponse = providerResponse == null ? "" : providerResponse.getTranslatedText();
+                if (providerResponse == null || !providerResponse.isSuccess()) {
+                    String providerError = providerResponse == null ? "Respuesta nula del provider" : providerResponse.getErrorMessage();
+                    issues.add(providerError == null || providerError.isBlank() ? "Provider returned an unsuccessful response" : providerError);
+                    logger.warn("Intento {} fallo con provider {}: {}", attempt, translationProvider.getProviderId(), providerError);
+                    TranslationValidationResult providerFailure = new TranslationValidationResult(
+                            false,
+                            true,
+                            List.of(providerError == null || providerError.isBlank() ? "Provider returned an unsuccessful response" : providerError),
+                            0.0d
+                    );
+                    if (!translationRetryPolicy.shouldRetry(providerFailure, attempt, maxAttempts)) {
+                        break;
+                    }
+                    currentModel = translationRetryPolicy.resolveNextModel(model, currentModel, retryModel);
+                    continue;
+                }
+
                 String sanitized = outputSanitizer.sanitize(rawResponse);
                 TranslationValidationResult validation = translationValidator.validate(text, sanitized);
 
@@ -301,11 +342,23 @@ public class TranslatorService {
                 }
 
                 currentModel = translationRetryPolicy.resolveNextModel(model, currentModel, retryModel);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return new SegmentTranslationResult("", false);
-            } catch (IOException e) {
-                logger.warn("Intento {} fallo: {}", attempt, e.getMessage());
+            } catch (TranslationProviderException e) {
+                logger.warn("Intento {} fallo con provider {}: {}", attempt, translationProvider.getProviderId(), e.getMessage());
+                issues.add(e.getMessage() == null || e.getMessage().isBlank() ? "Provider failure" : e.getMessage());
+                TranslationValidationResult providerFailure = new TranslationValidationResult(
+                        false,
+                        true,
+                        List.of(e.getMessage() == null ? "Provider failure" : e.getMessage()),
+                        0.0d
+                );
+                if (!translationRetryPolicy.shouldRetry(providerFailure, attempt, maxAttempts)) {
+                    break;
+                }
+                currentModel = translationRetryPolicy.resolveNextModel(model, currentModel, retryModel);
+            } catch (RuntimeException e) {
+                logger.warn("Intento {} fallo por error inesperado: {}", attempt, e.getMessage());
+                issues.add(e.getMessage() == null || e.getMessage().isBlank() ? "Unexpected runtime failure" : e.getMessage());
+                break;
             }
         }
 
@@ -379,7 +432,7 @@ public class TranslatorService {
 
 
     public void shutdown() {
-        // Sin recursos concurrentes que cerrar en modo secuencial.
+        translationProvider.shutdown();
     }
 
     private TranslationCacheKey buildCacheKey(String sourceText, String targetLanguage, String modelName) {
@@ -393,6 +446,64 @@ public class TranslatorService {
         );
     }
 
+    // ===========================================================
+    // 🔹 Traducción de unidades de dominio (Phase 10 Canonical Path)
+    // ===========================================================
+    /**
+     * Traduce una TranslationUnit y actualiza su estado.
+     * Esta es la ruta canónica de traducción a nivel de unidad (Phase 10 convergence).
+     *
+     * @param unit la unidad a traducir. Se actualizará con el texto traducido y estado.
+     * @return la misma unit pero con estado actualizado y texto traducido
+     */
+    public TranslationUnit translateUnit(TranslationUnit unit) {
+        if (unit == null || unit.getSourceText().isBlank()) {
+            if (unit != null) {
+                unit.markSkipped("Empty source text");
+            }
+            return unit;
+        }
+
+        try {
+            // Intentar traducir el texto de la unidad
+            String translated = translate(unit.getSourceText(), unit.getTargetLanguage());
+
+            if (isVisibleErrorMarker(translated)) {
+                unit.markFailed("Translation returned error marker: " + translated);
+                logger.warn("Unit {} marked as failed due to error marker", unit.getId());
+                return unit;
+            }
+
+            // Validar el resultado traducido
+            TranslationValidationResult validation = translationValidator.validate(
+                    unit.getSourceText(),
+                    translated
+            );
+
+            if (validation.valid()) {
+                unit.markTranslated(translated);
+                logger.info("event=unit_success unitId={} unitType={} translated_length={}", unit.getId(), unit.getUnitType(), translated.length());
+            } else {
+                // Validación fallida - intentar safe output
+                String safeOutput = translationRetryPolicy.chooseSafeOutput(
+                        unit.getSourceText(),
+                        translated,
+                        translationValidator
+                );
+                unit.markTranslated(safeOutput);
+                unit.putMetadata("validation_issues", String.join("; ", validation.issues()));
+                logger.warn("event=unit_translated_with_issues unitId={} issues={}", unit.getId(), String.join(", ", validation.issues()));
+            }
+
+        } catch (Exception e) {
+            unit.markFailed("Exception during translation: " + e.getMessage());
+            logger.error("event=unit_failed unitId={} error={}", unit.getId(), e.getMessage());
+        }
+
+        return unit;
+    }
+
     private record SegmentTranslationResult(String text, boolean cacheable) {
     }
 }
+

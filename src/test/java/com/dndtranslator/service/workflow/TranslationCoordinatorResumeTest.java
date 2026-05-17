@@ -115,6 +115,52 @@ class TranslationCoordinatorResumeTest {
         assertEquals(1, outcome.job().getMetric("resumed_paragraphs", Integer.class));
     }
 
+    @Test
+    void resumesUsingUnitIdsWhenParagraphIndexesChange() throws Exception {
+        File pdf = createDummyPdf();
+        List<Paragraph> embeddedParagraphs = new ArrayList<>();
+        embeddedParagraphs.add(paragraph("linea 2"));
+        embeddedParagraphs.add(paragraph("linea 1"));
+
+        InMemoryCheckpointStore checkpointStore = new InMemoryCheckpointStore(
+                new CheckpointSnapshot(
+                        pdf.getAbsolutePath() + "|spanish",
+                        pdf.getAbsolutePath(),
+                        "Spanish",
+                        2,
+                        0,
+                        false,
+                        Map.of(0, "restaurada 1"),
+                        Map.of(0, deterministicUnitId(paragraph("linea 1")))
+                )
+        );
+
+        AtomicInteger translatorCalls = new AtomicInteger();
+        TranslationCoordinatorService coordinator = new TranslationCoordinatorService(
+                (paragraphs, layout) -> false,
+                new TextSanitizer(),
+                new GlossaryService(List.of()),
+                new ParagraphTranslationExecutor(1),
+                (text, lang) -> {
+                    translatorCalls.incrementAndGet();
+                    return "TR:" + text;
+                },
+                (originalPath, paragraphs, layoutInfo) -> {
+                },
+                path -> new TranslationCoordinatorService.ExtractionSnapshot(embeddedParagraphs, onePageLayout()),
+                file -> new TranslationCoordinatorService.ExtractionSnapshot(List.of(), onePageLayout()),
+                () -> {
+                },
+                checkpointStore
+        );
+
+        coordinator.execute(new TranslationRequest(pdf, "Spanish"), new SilentListener());
+
+        assertEquals(1, translatorCalls.get(), "Debe traducir solo el parrafo no restaurado por unitId.");
+        assertEquals("TR:linea 2", embeddedParagraphs.get(0).getTranslatedText());
+        assertEquals("restaurada 1", embeddedParagraphs.get(1).getTranslatedText());
+    }
+
     private File createDummyPdf() throws Exception {
         Path pdfPath = tempDir.resolve("resume.pdf");
         Files.writeString(pdfPath, "dummy");
@@ -123,6 +169,15 @@ class TranslationCoordinatorResumeTest {
 
     private static Paragraph paragraph(String text) {
         return new Paragraph(text, 1, 100, 100, "Font", 10);
+    }
+
+    private static String deterministicUnitId(Paragraph paragraph) {
+        String text = paragraph.getFullText();
+        String normalizedText = text == null ? "" : text.trim().replaceAll("\\s+", " ");
+        int textHash = normalizedText.hashCode();
+        int roundedX = Math.round(paragraph.getX());
+        int roundedY = Math.round(paragraph.getY());
+        return "p" + paragraph.getPage() + "-x" + roundedX + "-y" + roundedY + "-h" + Integer.toHexString(textHash);
     }
 
     private static Map<Integer, PageMeta> onePageLayout() {

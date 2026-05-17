@@ -463,8 +463,15 @@ public class TranslationCoordinatorService {
             }
 
             int restored = 0;
+            Map<Integer, String> currentUnitIdsByIndex = buildUnitIdsByIndex(paragraphs);
+            Map<String, Integer> currentIndexByUnitId = buildIndexByUnitId(currentUnitIdsByIndex);
             for (Map.Entry<Integer, String> entry : snapshot.translatedByIndex().entrySet()) {
-                int index = entry.getKey();
+                int index = resolveRestoreIndex(
+                        entry.getKey(),
+                        snapshot.unitIdsByIndex(),
+                        currentIndexByUnitId,
+                        paragraphs.size()
+                );
                 if (index < 0 || index >= paragraphs.size()) {
                     continue;
                 }
@@ -506,6 +513,7 @@ public class TranslationCoordinatorService {
             List<Paragraph> paragraphs
     ) {
         Map<Integer, String> translatedByIndex = new HashMap<>();
+        Map<Integer, String> unitIdsByIndex = buildUnitIdsByIndex(paragraphs);
         int lastCompletedIndex = -1;
 
         for (int i = 0; i < paragraphs.size(); i++) {
@@ -524,8 +532,66 @@ public class TranslationCoordinatorService {
                 paragraphs.size(),
                 lastCompletedIndex,
                 usedOcrFallback,
-                translatedByIndex
+                translatedByIndex,
+                unitIdsByIndex
         ));
+    }
+
+    private Map<Integer, String> buildUnitIdsByIndex(List<Paragraph> paragraphs) {
+        Map<Integer, String> unitIdsByIndex = new HashMap<>();
+        if (paragraphs == null) {
+            return unitIdsByIndex;
+        }
+        for (int i = 0; i < paragraphs.size(); i++) {
+            Paragraph paragraph = paragraphs.get(i);
+            if (paragraph == null) {
+                continue;
+            }
+            unitIdsByIndex.put(i, buildDeterministicUnitId(paragraph));
+        }
+        return unitIdsByIndex;
+    }
+
+    private Map<String, Integer> buildIndexByUnitId(Map<Integer, String> unitIdsByIndex) {
+        Map<String, Integer> indexByUnitId = new HashMap<>();
+        if (unitIdsByIndex == null) {
+            return indexByUnitId;
+        }
+        for (Map.Entry<Integer, String> entry : unitIdsByIndex.entrySet()) {
+            String unitId = entry.getValue();
+            if (unitId == null || unitId.isBlank()) {
+                continue;
+            }
+            indexByUnitId.putIfAbsent(unitId, entry.getKey());
+        }
+        return indexByUnitId;
+    }
+
+    private int resolveRestoreIndex(
+            int fallbackIndex,
+            Map<Integer, String> checkpointUnitIdsByIndex,
+            Map<String, Integer> currentIndexByUnitId,
+            int paragraphCount
+    ) {
+        if (checkpointUnitIdsByIndex != null) {
+            String checkpointUnitId = checkpointUnitIdsByIndex.get(fallbackIndex);
+            if (checkpointUnitId != null && !checkpointUnitId.isBlank()) {
+                Integer mappedIndex = currentIndexByUnitId.get(checkpointUnitId);
+                if (mappedIndex != null && mappedIndex >= 0 && mappedIndex < paragraphCount) {
+                    return mappedIndex;
+                }
+            }
+        }
+        return fallbackIndex;
+    }
+
+    private String buildDeterministicUnitId(Paragraph paragraph) {
+        String text = paragraph.getFullText();
+        String normalizedText = text == null ? "" : text.trim().replaceAll("\\s+", " ");
+        int textHash = normalizedText.hashCode();
+        int roundedX = Math.round(paragraph.getX());
+        int roundedY = Math.round(paragraph.getY());
+        return "p" + paragraph.getPage() + "-x" + roundedX + "-y" + roundedY + "-h" + Integer.toHexString(textHash);
     }
 
     public void shutdown() {

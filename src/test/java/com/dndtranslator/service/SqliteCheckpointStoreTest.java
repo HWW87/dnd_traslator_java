@@ -28,7 +28,8 @@ class SqliteCheckpointStoreTest {
                 3,
                 1,
                 false,
-                Map.of(0, "texto-0", 1, "texto-1")
+                Map.of(0, "texto-0", 1, "texto-1"),
+                Map.of(0, "unit-0", 1, "unit-1")
         );
 
         store.save(snapshot);
@@ -41,6 +42,8 @@ class SqliteCheckpointStoreTest {
         assertEquals(1, loaded.get().lastCompletedIndex());
         assertEquals("texto-0", loaded.get().translatedByIndex().get(0));
         assertEquals("texto-1", loaded.get().translatedByIndex().get(1));
+        assertEquals("unit-0", loaded.get().unitIdsByIndex().get(0));
+        assertEquals("unit-1", loaded.get().unitIdsByIndex().get(1));
 
         store.clear("job-1");
         assertTrue(store.load("job-1").isEmpty());

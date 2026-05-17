@@ -1,0 +1,24 @@
+{
+  "id": "mixed-basic",
+  "pageMeta": {
+    "width": 600,
+    "height": 800,
+    "leftMargin": 24,
+    "topMargin": 24,
+    "pageNumber": 6,
+    "fontName": "Font",
+    "fontSize": 12
+  },
+  "paragraphs": [
+    {"text": "This room is lit by blue fire and ancient glyphs while cracked statues watch from the walls and a ritual circle glows with unstable runes.", "x": 40, "y": 720, "fontName": "Font", "fontSize": 11},
+    {"text": "The altar hums softly in the center as dust falls from the ceiling, chains rattle in distant corridors, and echoes reveal multiple passages behind the chamber.", "x": 40, "y": 680, "fontName": "Font", "fontSize": 11}
+  ],
+  "images": [
+    {"x": 280, "y": 180, "width": 300, "height": 300}
+  ],
+  "expected": {
+    "pageType": "MIXED_LAYOUT",
+    "signals": {}
+  }
+}
+

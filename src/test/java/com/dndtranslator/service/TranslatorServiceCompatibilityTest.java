@@ -94,7 +94,7 @@ class TranslatorServiceCompatibilityTest {
 
         assertEquals("uno\ndos", translated);
         ArgumentCaptor<TranslationCacheKey> keyCaptor = ArgumentCaptor.forClass(TranslationCacheKey.class);
-        verify(cacheRepository).saveTranslation(keyCaptor.capture(), eq("uno\ndos"));
+        verify(cacheRepository).saveTranslation(keyCaptor.capture(), eq("uno\ndos"), eq("ollama"));
         TranslationCacheKey usedKey = keyCaptor.getValue();
         assertEquals("part1 part2", usedKey.sourceText());
         assertEquals("spanish", usedKey.targetLanguage());
@@ -129,7 +129,7 @@ class TranslatorServiceCompatibilityTest {
         String translated = translatorService.translate("part1", "Spanish");
 
         assertEquals("uno", translated);
-        verify(cacheRepository).saveTranslation(any(TranslationCacheKey.class), eq("uno"));
+        verify(cacheRepository).saveTranslation(any(TranslationCacheKey.class), eq("uno"), eq("ollama"));
         translatorService.shutdown();
     }
 
@@ -274,7 +274,7 @@ class TranslatorServiceCompatibilityTest {
         String translated = translatorService.translate("part1", "Spanish");
 
         assertEquals("uno", translated);
-        verify(cacheRepository).saveTranslation(any(TranslationCacheKey.class), eq("uno"));
+        verify(cacheRepository).saveTranslation(any(TranslationCacheKey.class), eq("uno"), eq("ollama"));
         translatorService.shutdown();
     }
 }

@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "cases": [
+    "cover-basic.json",
+    "index-basic.json",
+    "table-basic.json",
+    "map-basic.json",
+    "mixed-basic.json",
+    "text-heavy-basic.json"
+  ]
+}
+

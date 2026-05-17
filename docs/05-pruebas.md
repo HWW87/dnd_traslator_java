@@ -52,3 +52,27 @@ mvn -Dtest=GlossaryServiceTest test
 - Agregar pruebas de `PdfRebuilderService` para wrap por columna.
 - Cubrir casos de concurrencia en `ParagraphTranslationExecutor`.
 - Simular respuestas de Ollama con timeouts/reintentos en `TranslatorService`.
+
+## Regression Corpus (Phase 9)
+
+Se agrego un corpus liviano para detectar regresiones en `PageAnalyzer` y `PageTypeClassifier`:
+
+- `src/test/resources/regression/page-corpus/v1/manifest.json`
+- `src/test/resources/regression/page-corpus/v1/cases/*.json`
+- `src/test/java/com/dndtranslator/service/regression/PageClassificationRegressionTest.java`
+
+Casos incluidos:
+
+- `cover-basic`
+- `index-basic`
+- `table-basic`
+- `map-basic`
+- `mixed-basic`
+- `text-heavy-basic`
+
+Ejecucion puntual:
+
+```powershell
+mvn -Dtest=PageClassificationRegressionTest test
+```
+
