@@ -2,12 +2,10 @@ package com.dndtranslator.service.workflow;
 
 import com.dndtranslator.domain.JobState;
 import com.dndtranslator.domain.TranslationJob;
+import com.dndtranslator.domain.TranslationUnit;
 import com.dndtranslator.model.PageMeta;
 import com.dndtranslator.model.Paragraph;
-import com.dndtranslator.service.PdfExtractorService;
 import com.dndtranslator.service.PdfRebuilderService;
-import com.dndtranslator.service.PdfToParagraphService;
-import com.dndtranslator.service.SqliteCheckpointStore;
 import com.dndtranslator.service.TranslatorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,8 +29,9 @@ public class TranslationCoordinatorService {
     private final OcrDecisionPort ocrDecisionPort;
     private final TextSanitizer textSanitizer;
     private final GlossaryService glossaryService;
-    private final ParagraphTranslationExecutor paragraphTranslationExecutor;
+    private final ParagraphToUnitConverter paragraphToUnitConverter;
     private final TranslatorGateway translatorGateway;
+    private final UnitTranslatorGateway unitTranslatorGateway;
     private final PdfRebuilderGateway pdfRebuilderGateway;
     private final EmbeddedExtractor embeddedExtractor;
     private final OcrExtractor ocrExtractor;
@@ -40,15 +39,7 @@ public class TranslationCoordinatorService {
     private final CheckpointStore checkpointStore;
 
     public TranslationCoordinatorService() {
-        this(
-                new TranslatorService(),
-                new PdfRebuilderService(),
-                new OcrDecisionService(),
-                new TextSanitizer(),
-                new GlossaryService(),
-                new ParagraphTranslationExecutor(),
-                new SqliteCheckpointStore()
-        );
+        this(TranslationCoordinatorRuntimeWiring.defaultDependencies());
     }
 
     public TranslationCoordinatorService(
@@ -78,25 +69,30 @@ public class TranslationCoordinatorService {
             ParagraphTranslationExecutor paragraphTranslationExecutor,
             CheckpointStore checkpointStore
     ) {
-        this(
-                ocrDecisionService::shouldUseOcrFallback,
+        this(TranslationCoordinatorRuntimeWiring.fromServices(
+                translatorService,
+                pdfRebuilderService,
+                ocrDecisionService,
                 textSanitizer,
                 glossaryService,
                 paragraphTranslationExecutor,
-                translatorService::translate,
-                pdfRebuilderService::rebuild,
-                pdfPath -> {
-                    PdfExtractorService extractor = new PdfExtractorService();
-                    List<Paragraph> paragraphs = extractor.extractParagraphs(pdfPath);
-                    return new ExtractionSnapshot(paragraphs, extractor.getLayoutInfo());
-                },
-                pdfFile -> {
-                    PdfToParagraphService extractor = new PdfToParagraphService();
-                    List<Paragraph> paragraphs = extractor.extractParagraphsFromPdf(pdfFile);
-                    return new ExtractionSnapshot(paragraphs, extractor.getLayoutInfo());
-                },
-                translatorService::shutdown,
                 checkpointStore
+        ));
+    }
+
+    private TranslationCoordinatorService(TranslationCoordinatorRuntimeWiring.RuntimeDependencies runtimeDependencies) {
+        this(
+                runtimeDependencies.ocrDecisionPort(),
+                runtimeDependencies.textSanitizer(),
+                runtimeDependencies.glossaryService(),
+                runtimeDependencies.paragraphTranslationExecutor(),
+                runtimeDependencies.translatorGateway(),
+                runtimeDependencies.unitTranslatorGateway(),
+                runtimeDependencies.pdfRebuilderGateway(),
+                runtimeDependencies.embeddedExtractor(),
+                runtimeDependencies.ocrExtractor(),
+                runtimeDependencies.shutdownHook(),
+                runtimeDependencies.checkpointStore()
         );
     }
 
@@ -115,6 +111,7 @@ public class TranslationCoordinatorService {
                 new GlossaryService(),
                 new ParagraphTranslationExecutor(),
                 translatorGateway,
+                null,
                 pdfRebuilderGateway,
                 embeddedExtractor,
                 ocrExtractor,
@@ -140,6 +137,7 @@ public class TranslationCoordinatorService {
                 glossaryService,
                 paragraphTranslationExecutor,
                 translatorGateway,
+                null,
                 pdfRebuilderGateway,
                 embeddedExtractor,
                 ocrExtractor,
@@ -160,11 +158,67 @@ public class TranslationCoordinatorService {
             Runnable shutdownHook,
             CheckpointStore checkpointStore
     ) {
+        this(
+                ocrDecisionPort,
+                textSanitizer,
+                glossaryService,
+                paragraphTranslationExecutor,
+                translatorGateway,
+                null,
+                pdfRebuilderGateway,
+                embeddedExtractor,
+                ocrExtractor,
+                shutdownHook,
+                checkpointStore
+        );
+    }
+
+    public TranslationCoordinatorService(
+            OcrDecisionPort ocrDecisionPort,
+            TextSanitizer textSanitizer,
+            GlossaryService glossaryService,
+            ParagraphTranslationExecutor paragraphTranslationExecutor,
+            TranslatorGateway translatorGateway,
+            UnitTranslatorGateway unitTranslatorGateway,
+            PdfRebuilderGateway pdfRebuilderGateway,
+            EmbeddedExtractor embeddedExtractor,
+            OcrExtractor ocrExtractor,
+            Runnable shutdownHook
+    ) {
+        this(
+                ocrDecisionPort,
+                textSanitizer,
+                glossaryService,
+                paragraphTranslationExecutor,
+                translatorGateway,
+                unitTranslatorGateway,
+                pdfRebuilderGateway,
+                embeddedExtractor,
+                ocrExtractor,
+                shutdownHook,
+                CheckpointStore.noop()
+        );
+    }
+
+    public TranslationCoordinatorService(
+            OcrDecisionPort ocrDecisionPort,
+            TextSanitizer textSanitizer,
+            GlossaryService glossaryService,
+            ParagraphTranslationExecutor paragraphTranslationExecutor,
+            TranslatorGateway translatorGateway,
+            UnitTranslatorGateway unitTranslatorGateway,
+            PdfRebuilderGateway pdfRebuilderGateway,
+            EmbeddedExtractor embeddedExtractor,
+            OcrExtractor ocrExtractor,
+            Runnable shutdownHook,
+            CheckpointStore checkpointStore
+    ) {
         this.ocrDecisionPort = ocrDecisionPort;
         this.textSanitizer = textSanitizer;
         this.glossaryService = glossaryService;
-        this.paragraphTranslationExecutor = paragraphTranslationExecutor;
+        this.paragraphToUnitConverter = new ParagraphToUnitConverter();
         this.translatorGateway = translatorGateway;
+        this.unitTranslatorGateway = unitTranslatorGateway;
         this.pdfRebuilderGateway = pdfRebuilderGateway;
         this.embeddedExtractor = embeddedExtractor;
         this.ocrExtractor = ocrExtractor;
@@ -332,14 +386,77 @@ public class TranslationCoordinatorService {
             String targetLanguage,
             TranslationEventListener listener
     ) throws InterruptedException, ExecutionException {
-        paragraphTranslationExecutor.translate(
-                paragraphs,
-                targetLanguage,
-                textSanitizer,
-                glossaryService,
-                translatorGateway,
-                listener
-        );
+        List<TranslationUnitExecution> executions = buildUnitExecutions(paragraphs, targetLanguage);
+        listener.onLog("Traduccion secuencial de unidades habilitada con 1 hilo.");
+
+        int total = executions.size();
+        int completed = 0;
+        while (completed < total) {
+            checkStopRequested(listener);
+            waitWhilePaused(listener);
+
+            TranslationUnitExecution execution = executions.get(completed);
+            try {
+                translateExecution(execution);
+            } catch (CancellationException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new ExecutionException(e);
+            }
+
+            completed++;
+            listener.onProgress(new TranslationProgress(completed, total));
+            listener.onLog("Traducida unidad " + completed + "/" + total);
+        }
+    }
+
+    private List<TranslationUnitExecution> buildUnitExecutions(List<Paragraph> paragraphs, String targetLanguage) {
+        List<TranslationUnit> units = paragraphToUnitConverter.convert(paragraphs, targetLanguage);
+        List<TranslationUnitExecution> executions = new java.util.ArrayList<>();
+        int size = Math.min(paragraphs.size(), units.size());
+        for (int i = 0; i < size; i++) {
+            executions.add(new TranslationUnitExecution(paragraphs.get(i), units.get(i)));
+        }
+        return executions;
+    }
+
+    private void translateExecution(TranslationUnitExecution execution) {
+        TranslationUnit unit = execution.unit();
+        Paragraph paragraph = execution.paragraph();
+
+        String sanitized = textSanitizer.sanitizeForTranslation(unit.getSourceText());
+        GlossaryService.GlossaryApplication application = glossaryService.applyBeforeTranslation(sanitized);
+        String restored;
+
+        if (unitTranslatorGateway != null) {
+            // Keep pre/post glossary behavior while delegating core translation to canonical unit path.
+            TranslationUnit preparedUnit = new TranslationUnit(
+                    unit.getPageNumber(),
+                    application.text(),
+                    unit.getUnitType(),
+                    unit.getTargetLanguage()
+            );
+            TranslationUnit translatedUnit = unitTranslatorGateway.translate(preparedUnit);
+            String translatedText = translatedUnit == null ? "" : translatedUnit.getTranslatedText();
+            restored = glossaryService.applyAfterTranslation(translatedText, application);
+            unit.markTranslated(restored);
+            if (translatedUnit != null && translatedUnit.getLastError() != null && !translatedUnit.getLastError().isBlank()) {
+                unit.putMetadata("unit_translation_error", translatedUnit.getLastError());
+            }
+        } else {
+            String translated = translatorGateway.translate(application.text(), unit.getTargetLanguage());
+            restored = glossaryService.applyAfterTranslation(translated, application);
+            unit.markTranslated(restored);
+        }
+
+        paragraph.setTranslatedText(unit.getTranslatedText());
+    }
+
+    private void waitWhilePaused(TranslationEventListener listener) throws InterruptedException {
+        while (listener.isPaused()) {
+            checkStopRequested(listener);
+            Thread.sleep(200);
+        }
     }
 
     private void checkStopRequested(TranslationEventListener listener) {
@@ -465,6 +582,26 @@ public class TranslationCoordinatorService {
             int restored = 0;
             Map<Integer, String> currentUnitIdsByIndex = buildUnitIdsByIndex(paragraphs);
             Map<String, Integer> currentIndexByUnitId = buildIndexByUnitId(currentUnitIdsByIndex);
+
+            for (Map.Entry<String, String> entry : snapshot.translatedByUnitId().entrySet()) {
+                String unitId = entry.getKey();
+                String translated = entry.getValue();
+                if (unitId == null || unitId.isBlank() || translated == null || translated.isBlank()) {
+                    continue;
+                }
+                Integer mappedIndex = currentIndexByUnitId.get(unitId);
+                if (mappedIndex == null || mappedIndex < 0 || mappedIndex >= paragraphs.size()) {
+                    continue;
+                }
+                Paragraph paragraph = paragraphs.get(mappedIndex);
+                String current = paragraph.getTranslatedText();
+                if (current != null && !current.isBlank()) {
+                    continue;
+                }
+                paragraph.setTranslatedText(translated);
+                restored++;
+            }
+
             for (Map.Entry<Integer, String> entry : snapshot.translatedByIndex().entrySet()) {
                 int index = resolveRestoreIndex(
                         entry.getKey(),
@@ -479,7 +616,12 @@ public class TranslationCoordinatorService {
                 if (translated == null || translated.isBlank()) {
                     continue;
                 }
-                paragraphs.get(index).setTranslatedText(translated);
+                Paragraph paragraph = paragraphs.get(index);
+                String current = paragraph.getTranslatedText();
+                if (current != null && !current.isBlank()) {
+                    continue;
+                }
+                paragraph.setTranslatedText(translated);
                 restored++;
             }
             restoredCounter[0] = restored;
@@ -514,6 +656,7 @@ public class TranslationCoordinatorService {
     ) {
         Map<Integer, String> translatedByIndex = new HashMap<>();
         Map<Integer, String> unitIdsByIndex = buildUnitIdsByIndex(paragraphs);
+        Map<String, String> translatedByUnitId = new HashMap<>();
         int lastCompletedIndex = -1;
 
         for (int i = 0; i < paragraphs.size(); i++) {
@@ -522,6 +665,10 @@ public class TranslationCoordinatorService {
                 continue;
             }
             translatedByIndex.put(i, translated);
+            String unitId = unitIdsByIndex.get(i);
+            if (unitId != null && !unitId.isBlank()) {
+                translatedByUnitId.put(unitId, translated);
+            }
             lastCompletedIndex = i;
         }
 
@@ -533,7 +680,8 @@ public class TranslationCoordinatorService {
                 lastCompletedIndex,
                 usedOcrFallback,
                 translatedByIndex,
-                unitIdsByIndex
+                unitIdsByIndex,
+                translatedByUnitId
         ));
     }
 
@@ -607,9 +755,17 @@ public class TranslationCoordinatorService {
     public record TranslationExecutionOutcome(TranslationResult result, TranslationJob job) {
     }
 
+    private record TranslationUnitExecution(Paragraph paragraph, TranslationUnit unit) {
+    }
+
     @FunctionalInterface
     public interface TranslatorGateway {
         String translate(String text, String targetLanguage);
+    }
+
+    @FunctionalInterface
+    public interface UnitTranslatorGateway {
+        TranslationUnit translate(TranslationUnit unit);
     }
 
     @FunctionalInterface

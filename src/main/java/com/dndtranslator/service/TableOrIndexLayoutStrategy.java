@@ -25,6 +25,7 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
         StrategyMargins margins = resolveMargins(meta, TABLE_INDEX_MIN_MARGIN, TABLE_INDEX_MIN_MARGIN);
         float minBoxHeight = resolveMinBoxHeight(analysisData);
         boolean indexDense = isIndexDense(analysisData);
+        boolean tableDense = isTableDense(analysisData);
 
         List<BlockedRegion> blockedRegions = toBlockedRegions(context.getPageImages());
         List<LayoutBox> boxes = new ArrayList<>();
@@ -86,7 +87,7 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
 
         addIfValid(boxes, topBox, minBoxHeight);
         addIfValid(boxes, bottomBox, minBoxHeight);
-        if (!indexDense) {
+        if (!indexDense && !tableDense) {
             addIfValid(boxes, leftBox, minBoxHeight);
             addIfValid(boxes, rightBox, minBoxHeight);
         }

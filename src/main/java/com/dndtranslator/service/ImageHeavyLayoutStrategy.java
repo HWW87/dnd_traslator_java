@@ -7,6 +7,10 @@ import java.util.List;
 
 public class ImageHeavyLayoutStrategy extends BasePageLayoutStrategy {
 
+    private static final float MIN_SELECTED_BOX_AREA_RATIO = 0.035f;
+    private static final float MIN_SELECTED_BOX_WIDTH = 80f;
+    private static final float MIN_SELECTED_BOX_HEIGHT = 50f;
+
     public ImageHeavyLayoutStrategy(PageLayoutBuilder pageLayoutBuilder) {
         super(pageLayoutBuilder);
     }
@@ -15,9 +19,11 @@ public class ImageHeavyLayoutStrategy extends BasePageLayoutStrategy {
     public void renderPage(PageRenderContext context) {
         PageMeta meta = context.getPageMeta();
         PageLayout baseLayout = buildDefaultLayout(meta, context.getPageImages());
+        float pageArea = Math.max(1f, meta.getWidth() * meta.getHeight());
 
         // Conservador: en paginas muy visuales reducimos la cantidad de cajas de texto.
         List<LayoutBox> selected = baseLayout.textBoxes().stream()
+                .filter(box -> isSubstantialBox(box, pageArea))
                 .sorted(Comparator.comparing((LayoutBox box) -> box.width() * box.height()).reversed())
                 .limit(2)
                 .toList();
@@ -35,6 +41,16 @@ public class ImageHeavyLayoutStrategy extends BasePageLayoutStrategy {
         }
 
         context.setPageLayout(new PageLayout(selected, baseLayout.blockedRegions()));
+    }
+
+    private boolean isSubstantialBox(LayoutBox box, float pageArea) {
+        if (box == null) {
+            return false;
+        }
+        float area = Math.max(0f, box.width() * box.height());
+        return box.width() >= MIN_SELECTED_BOX_WIDTH
+                && box.height() >= MIN_SELECTED_BOX_HEIGHT
+                && (area / pageArea) >= MIN_SELECTED_BOX_AREA_RATIO;
     }
 }
 

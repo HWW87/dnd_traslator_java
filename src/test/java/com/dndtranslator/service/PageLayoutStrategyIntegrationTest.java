@@ -407,6 +407,110 @@ class PageLayoutStrategyIntegrationTest {
     }
 
     @Test
+    void tableOrIndexWithTableDenseDataAvoidsLateralFragmentation() {
+        PdfImagePlacement dominantVisual = new PdfImagePlacement(
+                3,
+                new BufferedImage(300, 400, BufferedImage.TYPE_INT_RGB),
+                150f,
+                180f,
+                300f,
+                400f,
+                true,
+                "table-art",
+                "exact"
+        );
+
+        PageAnalysisData analysisData = new PageAnalysisData(
+                3, 600f, 800f, 1, 0.24f,
+                10, 18, 88, 14, 2,
+                false, false, true, false, true, false
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                3,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(dominantVisual),
+                List.of(),
+                PageType.TABLE_OR_INDEX,
+                analysisData
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.TABLE_OR_INDEX);
+        strategy.renderPage(context);
+
+        assertNotNull(context.getPageLayout());
+        assertTrue(context.getPageLayout().textBoxes().size() <= 2);
+    }
+
+    @Test
+    void titleOrCoverUsesStrongSuppressionWhenUltraVisualAndNoText() {
+        PageAnalysisData analysisData = new PageAnalysisData(
+                1, 600f, 800f, 1, 0.72f,
+                1, 2, 10, 2, 0,
+                true, false, false, false, false, false, true, true
+        );
+
+        PdfImagePlacement coverArt = new PdfImagePlacement(
+                1,
+                new BufferedImage(500, 700, BufferedImage.TYPE_INT_RGB),
+                40f,
+                60f,
+                520f,
+                700f,
+                true,
+                "cover",
+                "exact"
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                1,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(coverArt),
+                List.of(),
+                PageType.TITLE_OR_COVER,
+                analysisData
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.TITLE_OR_COVER);
+        strategy.renderPage(context);
+
+        LayoutBox box = context.getPageLayout().textBoxes().get(0);
+        assertTrue(box.height() <= 90f);
+    }
+
+    @Test
+    void imageHeavyKeepsOnlySubstantialBoxes() {
+        PdfImagePlacement mainImage = new PdfImagePlacement(
+                4,
+                new BufferedImage(260, 260, BufferedImage.TYPE_INT_RGB),
+                40f,
+                120f,
+                500f,
+                560f,
+                true,
+                "full",
+                "exact"
+        );
+
+        PageRenderContext context = new PageRenderContext(
+                4,
+                new PageMeta(600f, 800f, 24f, 24f, 1, "Font", 12f),
+                List.of(mainImage),
+                List.of(new Paragraph("Caption", 4, 32f, 90f, "Font", 11f)),
+                PageType.IMAGE_HEAVY,
+                null
+        );
+
+        PageLayoutStrategy strategy = factory.getStrategy(PageType.IMAGE_HEAVY);
+        strategy.renderPage(context);
+
+        assertNotNull(context.getPageLayout());
+        assertFalse(context.getPageLayout().textBoxes().isEmpty());
+        assertTrue(context.getPageLayout().textBoxes().stream().allMatch(box -> box.width() >= 80f));
+        assertTrue(context.getPageLayout().textBoxes().stream().allMatch(box -> box.height() >= 50f));
+    }
+
+    @Test
     void unknownUsesStableFallbackLayout() {
         PageRenderContext context = new PageRenderContext(
                 5,
