@@ -1,5 +1,8 @@
 package com.dndtranslator.service;
 
+import com.dndtranslator.domain.TranslationUnit;
+import com.dndtranslator.domain.UnitType;
+
 public class PromptBuilder {
 
     public enum ContentType {
@@ -99,6 +102,72 @@ public class PromptBuilder {
                         ? "- DO NOT add markdown fences, apologies, or assistant-style prefacing."
                         : "",
                 text);
+
+    }
+
+    // ===========================================================
+    // 🔹 Phase 10: Unit-aware prompt building (with context)
+    // ===========================================================
+
+    /**
+     * Construye prompt para una unidad, usando reglas específicas de su tipo.
+     * Phase 10: Enable context-aware prompt generation per unit.
+     */
+    public String buildPromptForUnit(TranslationUnit unit) {
+        if (unit == null) {
+            return buildNarrativePrompt("", "");
+        }
+
+        ContentType type = inferContentTypeFromUnit(unit);
+        return buildPromptForType(unit.getSourceText(), unit.getTargetLanguage(), type);
+    }
+
+    /**
+     * Construye retry prompt para una unidad específica.
+     * Phase 10: Specialized retry guidance based on unit type.
+     */
+    public String buildRetryPromptForUnit(TranslationUnit unit) {
+        if (unit == null) {
+            return buildRetryPrompt("", "");
+        }
+
+        ContentType type = inferContentTypeFromUnit(unit);
+        String specializedRetryHint = buildRetryHintForUnitType(type);
+
+        return buildRetryPrompt(unit.getSourceText(), unit.getTargetLanguage(), type)
+                + "\n\nContext: " + specializedRetryHint;
+    }
+
+    /**
+     * Infiere el tipo de contenido basado en el tipo de unidad.
+     * Phase 10: Map UnitType domain concept to ContentType for specialized prompts.
+     */
+    private ContentType inferContentTypeFromUnit(TranslationUnit unit) {
+        if (unit == null) {
+            return ContentType.NARRATIVE;
+        }
+
+        UnitType unitType = unit.getUnitType();
+        return switch (unitType) {
+            case INDEX_LINE -> ContentType.STRUCTURED;
+            case MAP_LABEL -> ContentType.MAP_LABEL;
+            case TABLE_CELL -> ContentType.STRUCTURED;
+            case LEGAL_TEXT -> ContentType.LEGAL;
+            case SHORT_LABEL -> ContentType.STRUCTURED;
+            case PARAGRAPH, UNKNOWN -> ContentType.NARRATIVE;
+        };
+    }
+
+    /**
+     * Genera pista especializada para retry según tipo de unidad.
+     * Phase 10: Enhanced guidance for failed translations.
+     */
+    private String buildRetryHintForUnitType(ContentType type) {
+        return switch (type) {
+            case STRUCTURED -> "This is a structured content (table, index, or label). Preserve exact spacing and delimiter patterns.";
+            case MAP_LABEL -> "This is a map or location label. Keep it concise, preserve place names and directional terms.";
+            case LEGAL -> "This is legal text. Maintain formal precision, do not paraphrase disclaimers or licensing terms.";
+            case NARRATIVE -> "This is narrative text. Prioritize fluency and meaning over literal word-for-word translation.";
+        };
     }
 }
-
