@@ -5,10 +5,7 @@ import com.dndtranslator.domain.TranslationJob;
 import com.dndtranslator.domain.TranslationUnit;
 import com.dndtranslator.model.PageMeta;
 import com.dndtranslator.model.Paragraph;
-import com.dndtranslator.service.PdfExtractorService;
 import com.dndtranslator.service.PdfRebuilderService;
-import com.dndtranslator.service.PdfToParagraphService;
-import com.dndtranslator.service.SqliteCheckpointStore;
 import com.dndtranslator.service.TranslatorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +29,6 @@ public class TranslationCoordinatorService {
     private final OcrDecisionPort ocrDecisionPort;
     private final TextSanitizer textSanitizer;
     private final GlossaryService glossaryService;
-    private final ParagraphTranslationExecutor paragraphTranslationExecutor;
     private final ParagraphToUnitConverter paragraphToUnitConverter;
     private final TranslatorGateway translatorGateway;
     private final UnitTranslatorGateway unitTranslatorGateway;
@@ -43,15 +39,7 @@ public class TranslationCoordinatorService {
     private final CheckpointStore checkpointStore;
 
     public TranslationCoordinatorService() {
-        this(
-                new TranslatorService(),
-                new PdfRebuilderService(),
-                new OcrDecisionService(),
-                new TextSanitizer(),
-                new GlossaryService(),
-                new ParagraphTranslationExecutor(),
-                new SqliteCheckpointStore()
-        );
+        this(TranslationCoordinatorRuntimeWiring.defaultDependencies());
     }
 
     public TranslationCoordinatorService(
@@ -81,26 +69,30 @@ public class TranslationCoordinatorService {
             ParagraphTranslationExecutor paragraphTranslationExecutor,
             CheckpointStore checkpointStore
     ) {
-        this(
-                ocrDecisionService::shouldUseOcrFallback,
+        this(TranslationCoordinatorRuntimeWiring.fromServices(
+                translatorService,
+                pdfRebuilderService,
+                ocrDecisionService,
                 textSanitizer,
                 glossaryService,
                 paragraphTranslationExecutor,
-                translatorService::translate,
-                translatorService::translateUnit,
-                pdfRebuilderService::rebuild,
-                pdfPath -> {
-                    PdfExtractorService extractor = new PdfExtractorService();
-                    List<Paragraph> paragraphs = extractor.extractParagraphs(pdfPath);
-                    return new ExtractionSnapshot(paragraphs, extractor.getLayoutInfo());
-                },
-                pdfFile -> {
-                    PdfToParagraphService extractor = new PdfToParagraphService();
-                    List<Paragraph> paragraphs = extractor.extractParagraphsFromPdf(pdfFile);
-                    return new ExtractionSnapshot(paragraphs, extractor.getLayoutInfo());
-                },
-                translatorService::shutdown,
                 checkpointStore
+        ));
+    }
+
+    private TranslationCoordinatorService(TranslationCoordinatorRuntimeWiring.RuntimeDependencies runtimeDependencies) {
+        this(
+                runtimeDependencies.ocrDecisionPort(),
+                runtimeDependencies.textSanitizer(),
+                runtimeDependencies.glossaryService(),
+                runtimeDependencies.paragraphTranslationExecutor(),
+                runtimeDependencies.translatorGateway(),
+                runtimeDependencies.unitTranslatorGateway(),
+                runtimeDependencies.pdfRebuilderGateway(),
+                runtimeDependencies.embeddedExtractor(),
+                runtimeDependencies.ocrExtractor(),
+                runtimeDependencies.shutdownHook(),
+                runtimeDependencies.checkpointStore()
         );
     }
 
@@ -224,7 +216,6 @@ public class TranslationCoordinatorService {
         this.ocrDecisionPort = ocrDecisionPort;
         this.textSanitizer = textSanitizer;
         this.glossaryService = glossaryService;
-        this.paragraphTranslationExecutor = paragraphTranslationExecutor;
         this.paragraphToUnitConverter = new ParagraphToUnitConverter();
         this.translatorGateway = translatorGateway;
         this.unitTranslatorGateway = unitTranslatorGateway;
