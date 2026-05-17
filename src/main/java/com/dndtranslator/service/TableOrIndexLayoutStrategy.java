@@ -9,6 +9,7 @@ import java.util.List;
 public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
 
     private static final float MIN_BOX_WIDTH = 120f;
+    private static final float MIN_BOX_WIDTH_DENSE = 84f;
     private static final float MIN_BOX_HEIGHT = 40f;
     private static final float MIN_BOX_HEIGHT_INDEX = 28f;
     private static final float MIN_BOX_HEIGHT_TABLE = 34f;
@@ -85,11 +86,12 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
                 mainVisual.height()
         );
 
-        addIfValid(boxes, topBox, minBoxHeight);
-        addIfValid(boxes, bottomBox, minBoxHeight);
+        float minWidth = (indexDense || tableDense) ? MIN_BOX_WIDTH_DENSE : MIN_BOX_WIDTH;
+        addIfValid(boxes, topBox, minWidth, minBoxHeight);
+        addIfValid(boxes, bottomBox, minWidth, minBoxHeight);
         if (!indexDense && !tableDense) {
-            addIfValid(boxes, leftBox, minBoxHeight);
-            addIfValid(boxes, rightBox, minBoxHeight);
+            addIfValid(boxes, leftBox, minWidth, minBoxHeight);
+            addIfValid(boxes, rightBox, minWidth, minBoxHeight);
         }
 
         if (boxes.isEmpty()) {
@@ -108,8 +110,8 @@ public class TableOrIndexLayoutStrategy extends BasePageLayoutStrategy {
         );
     }
 
-    private void addIfValid(List<LayoutBox> boxes, LayoutBox box, float minBoxHeight) {
-        if (box.width() >= MIN_BOX_WIDTH && box.height() >= minBoxHeight) {
+    private void addIfValid(List<LayoutBox> boxes, LayoutBox box, float minBoxWidth, float minBoxHeight) {
+        if (box.width() >= minBoxWidth && box.height() >= minBoxHeight) {
             boxes.add(box);
         }
     }

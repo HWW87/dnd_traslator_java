@@ -6,6 +6,7 @@ import com.dndtranslator.domain.TranslationProvider;
 import com.dndtranslator.domain.TranslationUnit;
 import com.dndtranslator.domain.UnitType;
 import com.dndtranslator.domain.exceptions.TranslationProviderException;
+import com.dndtranslator.infrastructure.TranslationProviderFactory;
 import com.dndtranslator.infrastructure.OllamaTranslationProvider;
 import com.dndtranslator.model.TextBlock;
 import org.slf4j.Logger;
@@ -45,7 +46,7 @@ public class TranslatorService {
 
     public TranslatorService() {
         this(
-                new OllamaTranslationProvider(),
+                TranslationProviderFactory.resolveProvider(null),
                 new TranslationCacheRepository(),
                 new TranslationSegmenter(),
                 new ModelResolver(),
@@ -284,10 +285,20 @@ public class TranslatorService {
     }
 
     private SegmentTranslationResult translateSegment(String text, String targetLanguage, String model, String retryModel) {
+        PromptBuilder.ContentType contentType = classifyContentType(text);
+        return translateSegment(text, targetLanguage, model, retryModel, contentType);
+    }
+
+    private SegmentTranslationResult translateSegment(
+            String text,
+            String targetLanguage,
+            String model,
+            String retryModel,
+            PromptBuilder.ContentType contentType
+    ) {
         String currentModel = model;
         String bestSanitized = "";
         List<String> issues = new ArrayList<>();
-        PromptBuilder.ContentType contentType = classifyContentType(text);
 
         int maxAttempts = translationRetryPolicy.maxAttempts();
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -465,8 +476,8 @@ public class TranslatorService {
         }
 
         try {
-            // Intentar traducir el texto de la unidad
-            String translated = translate(unit.getSourceText(), unit.getTargetLanguage());
+            PromptBuilder.ContentType contentType = inferContentTypeFromUnit(unit.getUnitType());
+            String translated = translateWithContentType(unit.getSourceText(), unit.getTargetLanguage(), contentType);
 
             if (isVisibleErrorMarker(translated)) {
                 unit.markFailed("Translation returned error marker: " + translated);
@@ -501,6 +512,67 @@ public class TranslatorService {
         }
 
         return unit;
+    }
+
+    private PromptBuilder.ContentType inferContentTypeFromUnit(UnitType unitType) {
+        if (unitType == null) {
+            return PromptBuilder.ContentType.NARRATIVE;
+        }
+
+        return switch (unitType) {
+            case INDEX_LINE, TABLE_CELL, SHORT_LABEL -> PromptBuilder.ContentType.STRUCTURED;
+            case MAP_LABEL -> PromptBuilder.ContentType.MAP_LABEL;
+            case LEGAL_TEXT -> PromptBuilder.ContentType.LEGAL;
+            case PARAGRAPH, UNKNOWN -> PromptBuilder.ContentType.NARRATIVE;
+        };
+    }
+
+    private String translateWithContentType(String text, String targetLanguage, PromptBuilder.ContentType contentType) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+
+        TranslationCacheKey preModelKey = buildCacheKey(text, targetLanguage, UNKNOWN_MODEL);
+        Optional<String> cached = cacheRepository.findTranslation(preModelKey);
+        if (cached.isPresent()) {
+            return cached.get();
+        }
+
+        List<String> availableModels;
+        try {
+            availableModels = translationProvider.fetchAvailableModels();
+        } catch (TranslationProviderException e) {
+            logger.warn("No se pudieron obtener modelos del provider {}: {}", translationProvider.getProviderId(), e.getMessage());
+            return "[Error: Ollama no disponible]";
+        }
+
+        String model = resolveModel(availableModels);
+        if (model == null) {
+            logger.warn("Ningun modelo disponible en el provider {}.", translationProvider.getProviderId());
+            return "[Error: Ollama no disponible]";
+        }
+
+        TranslationCacheKey cacheKey = buildCacheKey(text, targetLanguage, model);
+        Optional<String> modelCached = cacheRepository.findTranslation(cacheKey);
+        if (modelCached.isPresent()) {
+            return modelCached.get();
+        }
+
+        String retryModel = modelResolver.resolveRetryModel(availableModels, model);
+        SegmentTranslationResult translatedSegment = translateSegment(text, targetLanguage, model, retryModel, contentType);
+        String translatedFull = cleanFinalTranslation(outputSanitizer.sanitize(translatedSegment.text()));
+        TranslationValidationResult finalValidation = translationValidator.validate(text, translatedFull);
+        boolean cacheable = translatedSegment.cacheable();
+
+        if (!finalValidation.valid()) {
+            cacheable = false;
+            translatedFull = translationRetryPolicy.chooseSafeOutput(text, translatedFull, translationValidator);
+        }
+
+        if (cacheable && !translatedFull.isBlank()) {
+            cacheRepository.saveTranslation(cacheKey, translatedFull, translationProvider.getProviderId());
+        }
+        return translatedFull;
     }
 
     private record SegmentTranslationResult(String text, boolean cacheable) {

@@ -42,5 +42,18 @@ public class TranslationProviderFactoryTest {
             TranslationProviderFactory.createProvider("unknown");
         });
     }
+
+    @Test
+    public void testNormalizeProviderIdFallsBackToDefault() {
+        String normalized = TranslationProviderFactory.normalizeProviderId("   ");
+        assertEquals(TranslationProviderFactory.getDefaultProviderId(), normalized);
+    }
+
+    @Test
+    public void testResolveProviderUsesFactoryRegistry() {
+        TranslationProvider provider = TranslationProviderFactory.resolveProvider("mock");
+        assertNotNull(provider);
+        assertEquals("mock", provider.getProviderId());
+    }
 }
 

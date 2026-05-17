@@ -44,6 +44,10 @@ public class TitleOrCoverLayoutStrategy extends BasePageLayoutStrategy {
             ratio = Math.min(ratio, 0.10f);
         }
 
+        if (analysisData != null && analysisData.wordCount() <= 8 && analysisData.estimatedImageAreaRatio() >= 0.45f) {
+            ratio = Math.min(ratio, 0.08f);
+        }
+
         float minHeight = shouldUseStrongSuppression(analysisData, context) ? 48f : 60f;
         float maxHeight = shouldUseStrongSuppression(analysisData, context) ? 120f : 220f;
         return Math.min(maxHeight, Math.max(minHeight, meta.getHeight() * ratio));
@@ -64,7 +68,7 @@ public class TitleOrCoverLayoutStrategy extends BasePageLayoutStrategy {
         boolean ultraVisual = isUltraVisualCover(analysisData)
                 || (analysisData.estimatedImageAreaRatio() >= 0.60f && analysisData.wordCount() <= 20);
 
-        int paragraphCount = context == null ? 0 : context.getParagraphs().size();
+        int paragraphCount = context == null || context.getParagraphs() == null ? 0 : context.getParagraphs().size();
         boolean minimalTextContext = paragraphCount <= 1;
 
         return ultraVisual && minimalTextContext;

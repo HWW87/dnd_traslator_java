@@ -119,6 +119,10 @@ public class PromptBuilder {
         }
 
         ContentType type = inferContentTypeFromUnit(unit);
+        String pageType = unit.getMetadata("page_type", String.class);
+        if (isStructuredPageType(pageType) && type == ContentType.NARRATIVE) {
+            type = ContentType.STRUCTURED;
+        }
         return buildPromptForType(unit.getSourceText(), unit.getTargetLanguage(), type);
     }
 
@@ -133,9 +137,11 @@ public class PromptBuilder {
 
         ContentType type = inferContentTypeFromUnit(unit);
         String specializedRetryHint = buildRetryHintForUnitType(type);
+        String retryContext = unit.getMetadata("retry_context", String.class);
 
         return buildRetryPrompt(unit.getSourceText(), unit.getTargetLanguage(), type)
-                + "\n\nContext: " + specializedRetryHint;
+                + "\n\nContext: " + specializedRetryHint
+                + (retryContext == null || retryContext.isBlank() ? "" : "\nRetry context: " + retryContext);
     }
 
     /**
@@ -169,5 +175,13 @@ public class PromptBuilder {
             case LEGAL -> "This is legal text. Maintain formal precision, do not paraphrase disclaimers or licensing terms.";
             case NARRATIVE -> "This is narrative text. Prioritize fluency and meaning over literal word-for-word translation.";
         };
+    }
+
+    private boolean isStructuredPageType(String pageType) {
+        if (pageType == null || pageType.isBlank()) {
+            return false;
+        }
+        String normalized = pageType.trim().toLowerCase();
+        return normalized.contains("index") || normalized.contains("table") || normalized.contains("toc");
     }
 }
