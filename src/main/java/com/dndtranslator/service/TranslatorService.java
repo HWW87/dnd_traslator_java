@@ -3,6 +3,8 @@ package com.dndtranslator.service;
 import com.dndtranslator.config.SystemConstants;
 import com.dndtranslator.domain.ProviderResponse;
 import com.dndtranslator.domain.TranslationProvider;
+import com.dndtranslator.domain.TranslationUnit;
+import com.dndtranslator.domain.UnitType;
 import com.dndtranslator.domain.exceptions.TranslationProviderException;
 import com.dndtranslator.infrastructure.OllamaTranslationProvider;
 import com.dndtranslator.model.TextBlock;
@@ -444,6 +446,64 @@ public class TranslatorService {
         );
     }
 
+    // ===========================================================
+    // 🔹 Traducción de unidades de dominio (Phase 10 Canonical Path)
+    // ===========================================================
+    /**
+     * Traduce una TranslationUnit y actualiza su estado.
+     * Esta es la ruta canónica de traducción a nivel de unidad (Phase 10 convergence).
+     *
+     * @param unit la unidad a traducir. Se actualizará con el texto traducido y estado.
+     * @return la misma unit pero con estado actualizado y texto traducido
+     */
+    public TranslationUnit translateUnit(TranslationUnit unit) {
+        if (unit == null || unit.getSourceText().isBlank()) {
+            if (unit != null) {
+                unit.markSkipped("Empty source text");
+            }
+            return unit;
+        }
+
+        try {
+            // Intentar traducir el texto de la unidad
+            String translated = translate(unit.getSourceText(), unit.getTargetLanguage());
+
+            if (isVisibleErrorMarker(translated)) {
+                unit.markFailed("Translation returned error marker: " + translated);
+                logger.warn("Unit {} marked as failed due to error marker", unit.getId());
+                return unit;
+            }
+
+            // Validar el resultado traducido
+            TranslationValidationResult validation = translationValidator.validate(
+                    unit.getSourceText(),
+                    translated
+            );
+
+            if (validation.valid()) {
+                unit.markTranslated(translated);
+                logger.info("event=unit_success unitId={} unitType={} translated_length={}", unit.getId(), unit.getUnitType(), translated.length());
+            } else {
+                // Validación fallida - intentar safe output
+                String safeOutput = translationRetryPolicy.chooseSafeOutput(
+                        unit.getSourceText(),
+                        translated,
+                        translationValidator
+                );
+                unit.markTranslated(safeOutput);
+                unit.putMetadata("validation_issues", String.join("; ", validation.issues()));
+                logger.warn("event=unit_translated_with_issues unitId={} issues={}", unit.getId(), String.join(", ", validation.issues()));
+            }
+
+        } catch (Exception e) {
+            unit.markFailed("Exception during translation: " + e.getMessage());
+            logger.error("event=unit_failed unitId={} error={}", unit.getId(), e.getMessage());
+        }
+
+        return unit;
+    }
+
     private record SegmentTranslationResult(String text, boolean cacheable) {
     }
 }
+
