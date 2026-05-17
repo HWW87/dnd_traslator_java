@@ -74,6 +74,7 @@ public class SqliteCheckpointStore implements CheckpointStore {
             int lastCompletedIndex = rs.getInt("last_completed_index");
             boolean usedOcrFallback = rs.getInt("used_ocr_fallback") == 1;
             String payload = rs.getString("translated_payload");
+            TranslationPayload translationPayload = deserializeTranslations(payload);
 
             return Optional.of(new CheckpointSnapshot(
                     jobKey,
@@ -82,7 +83,8 @@ public class SqliteCheckpointStore implements CheckpointStore {
                     paragraphCount,
                     lastCompletedIndex,
                     usedOcrFallback,
-                    deserializeTranslations(payload)
+                    translationPayload.translatedByIndex(),
+                    translationPayload.unitIdsByIndex()
             ));
         } catch (SQLException e) {
             logger.warn("Error leyendo checkpoint {}: {}", jobKey, e.getMessage());
@@ -113,7 +115,7 @@ public class SqliteCheckpointStore implements CheckpointStore {
                     ps.setInt(4, snapshot.paragraphCount());
                     ps.setInt(5, snapshot.lastCompletedIndex());
                     ps.setInt(6, snapshot.usedOcrFallback() ? 1 : 0);
-                    ps.setString(7, serializeTranslations(snapshot.translatedByIndex()));
+                    ps.setString(7, serializeTranslations(snapshot.translatedByIndex(), snapshot.unitIdsByIndex()));
                     ps.setString(8, LocalDateTime.now().toString());
                     ps.executeUpdate();
                     return;
@@ -199,25 +201,33 @@ public class SqliteCheckpointStore implements CheckpointStore {
         return configured.trim();
     }
 
-    private String serializeTranslations(Map<Integer, String> translatedByIndex) {
+    private String serializeTranslations(Map<Integer, String> translatedByIndex, Map<Integer, String> unitIdsByIndex) {
         JSONArray items = new JSONArray();
         if (translatedByIndex != null) {
             for (Map.Entry<Integer, String> entry : translatedByIndex.entrySet()) {
                 if (entry.getValue() == null || entry.getValue().isBlank()) {
                     continue;
                 }
-                items.put(new JSONObject()
+                JSONObject item = new JSONObject()
                         .put("index", entry.getKey())
-                        .put("text", entry.getValue()));
+                        .put("text", entry.getValue());
+                if (unitIdsByIndex != null) {
+                    String unitId = unitIdsByIndex.get(entry.getKey());
+                    if (unitId != null && !unitId.isBlank()) {
+                        item.put("unitId", unitId);
+                    }
+                }
+                items.put(item);
             }
         }
         return items.toString();
     }
 
-    private Map<Integer, String> deserializeTranslations(String payload) {
+    private TranslationPayload deserializeTranslations(String payload) {
         Map<Integer, String> translatedByIndex = new HashMap<>();
+        Map<Integer, String> unitIdsByIndex = new HashMap<>();
         if (payload == null || payload.isBlank()) {
-            return translatedByIndex;
+            return new TranslationPayload(translatedByIndex, unitIdsByIndex);
         }
 
         try {
@@ -229,15 +239,22 @@ public class SqliteCheckpointStore implements CheckpointStore {
                 }
                 int index = item.optInt("index", -1);
                 String text = item.optString("text", "");
+                String unitId = item.optString("unitId", "");
                 if (index >= 0 && !text.isBlank()) {
                     translatedByIndex.put(index, text);
+                    if (!unitId.isBlank()) {
+                        unitIdsByIndex.put(index, unitId);
+                    }
                 }
             }
         } catch (Exception e) {
             logger.warn("No se pudo parsear payload de checkpoint: {}", e.getMessage());
         }
 
-        return translatedByIndex;
+        return new TranslationPayload(translatedByIndex, unitIdsByIndex);
+    }
+
+    private record TranslationPayload(Map<Integer, String> translatedByIndex, Map<Integer, String> unitIdsByIndex) {
     }
 }
 
