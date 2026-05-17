@@ -83,6 +83,13 @@ public class SqliteCheckpointStore implements CheckpointStore {
                     paragraphCount,
                     lastCompletedIndex,
                     usedOcrFallback,
+                    translationPayload.currentPage(),
+                    translationPayload.currentUnitId(),
+                    translationPayload.lastCompletedUnitId(),
+                    translationPayload.completedUnitCount(),
+                    translationPayload.failedUnitCount(),
+                    translationPayload.retriedUnitCount(),
+                    translationPayload.skippedUnitCount(),
                     translationPayload.translatedByIndex(),
                     translationPayload.unitIdsByIndex(),
                     translationPayload.translatedByUnitId()
@@ -116,7 +123,7 @@ public class SqliteCheckpointStore implements CheckpointStore {
                     ps.setInt(4, snapshot.paragraphCount());
                     ps.setInt(5, snapshot.lastCompletedIndex());
                     ps.setInt(6, snapshot.usedOcrFallback() ? 1 : 0);
-                    ps.setString(7, serializeTranslations(snapshot.translatedByIndex(), snapshot.unitIdsByIndex(), snapshot.translatedByUnitId()));
+                    ps.setString(7, serializeTranslations(snapshot));
                     ps.setString(8, LocalDateTime.now().toString());
                     ps.executeUpdate();
                     return;
@@ -202,12 +209,11 @@ public class SqliteCheckpointStore implements CheckpointStore {
         return configured.trim();
     }
 
-    private String serializeTranslations(
-            Map<Integer, String> translatedByIndex,
-            Map<Integer, String> unitIdsByIndex,
-            Map<String, String> translatedByUnitId
-    ) {
+    private String serializeTranslations(CheckpointSnapshot snapshot) {
         JSONArray items = new JSONArray();
+        Map<Integer, String> translatedByIndex = snapshot.translatedByIndex();
+        Map<Integer, String> unitIdsByIndex = snapshot.unitIdsByIndex();
+        Map<String, String> translatedByUnitId = snapshot.translatedByUnitId();
         if (translatedByIndex != null) {
             for (Map.Entry<Integer, String> entry : translatedByIndex.entrySet()) {
                 if (entry.getValue() == null || entry.getValue().isBlank()) {
@@ -231,19 +237,67 @@ public class SqliteCheckpointStore implements CheckpointStore {
                 items.put(item);
             }
         }
-        return items.toString();
+        JSONObject root = new JSONObject()
+                .put("schemaVersion", 2)
+                .put("items", items)
+                .put("currentPage", snapshot.currentPage() == null ? JSONObject.NULL : snapshot.currentPage())
+                .put("currentUnitId", snapshot.currentUnitId() == null ? "" : snapshot.currentUnitId())
+                .put("lastCompletedUnitId", snapshot.lastCompletedUnitId() == null ? "" : snapshot.lastCompletedUnitId())
+                .put("completedUnitCount", snapshot.completedUnitCount())
+                .put("failedUnitCount", snapshot.failedUnitCount())
+                .put("retriedUnitCount", snapshot.retriedUnitCount())
+                .put("skippedUnitCount", snapshot.skippedUnitCount());
+        return root.toString();
     }
 
     private TranslationPayload deserializeTranslations(String payload) {
         Map<Integer, String> translatedByIndex = new HashMap<>();
         Map<Integer, String> unitIdsByIndex = new HashMap<>();
         Map<String, String> translatedByUnitId = new HashMap<>();
+        Integer currentPage = null;
+        String currentUnitId = null;
+        String lastCompletedUnitId = null;
+        int completedUnitCount = 0;
+        int failedUnitCount = 0;
+        int retriedUnitCount = 0;
+        int skippedUnitCount = 0;
         if (payload == null || payload.isBlank()) {
-            return new TranslationPayload(translatedByIndex, unitIdsByIndex, translatedByUnitId);
+            return new TranslationPayload(
+                    translatedByIndex,
+                    unitIdsByIndex,
+                    translatedByUnitId,
+                    currentPage,
+                    currentUnitId,
+                    lastCompletedUnitId,
+                    completedUnitCount,
+                    failedUnitCount,
+                    retriedUnitCount,
+                    skippedUnitCount
+            );
         }
 
         try {
-            JSONArray items = new JSONArray(payload);
+            JSONArray items;
+            if (payload.trim().startsWith("{")) {
+                JSONObject root = new JSONObject(payload);
+                items = root.optJSONArray("items");
+                if (root.has("currentPage") && !root.isNull("currentPage")) {
+                    currentPage = root.optInt("currentPage");
+                }
+                currentUnitId = normalizeOptional(root.optString("currentUnitId", ""));
+                lastCompletedUnitId = normalizeOptional(root.optString("lastCompletedUnitId", ""));
+                completedUnitCount = Math.max(0, root.optInt("completedUnitCount", 0));
+                failedUnitCount = Math.max(0, root.optInt("failedUnitCount", 0));
+                retriedUnitCount = Math.max(0, root.optInt("retriedUnitCount", 0));
+                skippedUnitCount = Math.max(0, root.optInt("skippedUnitCount", 0));
+            } else {
+                items = new JSONArray(payload);
+            }
+
+            if (items == null) {
+                items = new JSONArray();
+            }
+
             for (int i = 0; i < items.length(); i++) {
                 JSONObject item = items.optJSONObject(i);
                 if (item == null) {
@@ -265,13 +319,42 @@ public class SqliteCheckpointStore implements CheckpointStore {
             logger.warn("No se pudo parsear payload de checkpoint: {}", e.getMessage());
         }
 
-        return new TranslationPayload(translatedByIndex, unitIdsByIndex, translatedByUnitId);
+        if (completedUnitCount == 0) {
+            completedUnitCount = translatedByUnitId.isEmpty() ? translatedByIndex.size() : translatedByUnitId.size();
+        }
+
+        return new TranslationPayload(
+                translatedByIndex,
+                unitIdsByIndex,
+                translatedByUnitId,
+                currentPage,
+                currentUnitId,
+                lastCompletedUnitId,
+                completedUnitCount,
+                failedUnitCount,
+                retriedUnitCount,
+                skippedUnitCount
+        );
+    }
+
+    private String normalizeOptional(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value;
     }
 
     private record TranslationPayload(
             Map<Integer, String> translatedByIndex,
             Map<Integer, String> unitIdsByIndex,
-            Map<String, String> translatedByUnitId
+            Map<String, String> translatedByUnitId,
+            Integer currentPage,
+            String currentUnitId,
+            String lastCompletedUnitId,
+            int completedUnitCount,
+            int failedUnitCount,
+            int retriedUnitCount,
+            int skippedUnitCount
     ) {
     }
 }

@@ -18,6 +18,9 @@ import org.slf4j.LoggerFactory;
 public class TranslationProviderFactory {
 
     private static final Logger logger = LoggerFactory.getLogger(TranslationProviderFactory.class);
+    private static final String DEFAULT_PROVIDER_ID = "ollama";
+    private static final String PROVIDER_PROPERTY = "dnd.translation.provider";
+    private static final String PROVIDER_ENV = "DND_TRANSLATION_PROVIDER";
     private static ProviderRegistry globalRegistry = null;
 
     private TranslationProviderFactory() {
@@ -44,7 +47,33 @@ public class TranslationProviderFactory {
      * Crea el provider por defecto (Ollama).
      */
     public static TranslationProvider createDefaultProvider() {
-        return createProvider("ollama");
+        return createProvider(DEFAULT_PROVIDER_ID);
+    }
+
+    public static String getDefaultProviderId() {
+        String propertyValue = System.getProperty(PROVIDER_PROPERTY);
+        if (propertyValue != null && !propertyValue.isBlank()) {
+            return propertyValue.trim().toLowerCase();
+        }
+
+        String envValue = System.getenv(PROVIDER_ENV);
+        if (envValue != null && !envValue.isBlank()) {
+            return envValue.trim().toLowerCase();
+        }
+
+        return DEFAULT_PROVIDER_ID;
+    }
+
+    public static TranslationProvider resolveProvider(String providerId) {
+        String resolvedId = normalizeProviderId(providerId);
+        return getProvider(resolvedId);
+    }
+
+    public static String normalizeProviderId(String providerId) {
+        if (providerId == null || providerId.isBlank()) {
+            return getDefaultProviderId();
+        }
+        return providerId.trim().toLowerCase();
     }
 
     /**

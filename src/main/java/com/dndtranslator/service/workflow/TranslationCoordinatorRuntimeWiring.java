@@ -1,10 +1,15 @@
 package com.dndtranslator.service.workflow;
 
+import com.dndtranslator.domain.TranslationProvider;
+import com.dndtranslator.infrastructure.TranslationProviderFactory;
 import com.dndtranslator.model.Paragraph;
+import com.dndtranslator.service.ModelResolver;
 import com.dndtranslator.service.PdfExtractorService;
 import com.dndtranslator.service.PdfRebuilderService;
 import com.dndtranslator.service.PdfToParagraphService;
 import com.dndtranslator.service.SqliteCheckpointStore;
+import com.dndtranslator.service.TranslationCacheRepository;
+import com.dndtranslator.service.TranslationSegmenter;
 import com.dndtranslator.service.TranslatorService;
 
 import java.util.List;
@@ -19,7 +24,13 @@ final class TranslationCoordinatorRuntimeWiring {
     }
 
     static RuntimeDependencies defaultDependencies() {
-        TranslatorService translatorService = new TranslatorService();
+        TranslationProvider provider = TranslationProviderFactory.resolveProvider(null);
+        TranslatorService translatorService = new TranslatorService(
+                provider,
+                new TranslationCacheRepository(),
+                new TranslationSegmenter(),
+                new ModelResolver()
+        );
         return fromServices(
                 translatorService,
                 new PdfRebuilderService(),

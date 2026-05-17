@@ -3,6 +3,8 @@ package com.dndtranslator.service.workflow;
 import com.dndtranslator.domain.JobState;
 import com.dndtranslator.domain.TranslationJob;
 import com.dndtranslator.domain.TranslationUnit;
+import com.dndtranslator.domain.UnitState;
+import com.dndtranslator.infrastructure.TranslationProviderFactory;
 import com.dndtranslator.model.PageMeta;
 import com.dndtranslator.model.Paragraph;
 import com.dndtranslator.service.PdfRebuilderService;
@@ -19,6 +21,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 
@@ -241,7 +244,7 @@ public class TranslationCoordinatorService {
                 pdfFile.getAbsolutePath(),
                 buildOutputPath(pdfFile.getAbsolutePath()),
                 targetLanguage,
-                "workflow-default"
+                TranslationProviderFactory.getDefaultProviderId()
         );
         QualityRunMetrics runMetrics = new QualityRunMetrics();
         boolean debugMode = DebugModeConfig.isEnabled();
@@ -258,7 +261,8 @@ public class TranslationCoordinatorService {
             Map<Integer, PageMeta> layoutInfo = extraction.layoutInfo();
             String jobKey = buildJobKey(pdfFile, targetLanguage);
 
-            int total = paragraphs.size();
+            List<TranslationUnitExecution> executions = prepareUnitExecutions(paragraphs, targetLanguage);
+            int total = executions.size();
             if (total == 0) {
                 throw new IllegalStateException("No se encontraron parrafos para traducir.");
             }
@@ -272,7 +276,7 @@ public class TranslationCoordinatorService {
                     pdfFile,
                     targetLanguage,
                     extraction.usedOcrFallback(),
-                    paragraphs,
+                    executions,
                     listener
             );
             runMetrics.addResumedParagraphs(restoredFromCheckpoint);
@@ -285,12 +289,12 @@ public class TranslationCoordinatorService {
 
             try {
                 safeTransition(job, JobState.TRANSLATING);
-                List<Paragraph> pendingParagraphs = resolvePendingParagraphs(paragraphs);
-                if (!pendingParagraphs.isEmpty()) {
-                    logger.info("event=translate_start jobId={} pendingParagraphs={}", job.getJobId(), pendingParagraphs.size());
-                    translateParagraphs(pendingParagraphs, targetLanguage, listener);
+                List<TranslationUnitExecution> pendingExecutions = resolvePendingExecutions(executions);
+                if (!pendingExecutions.isEmpty()) {
+                    logger.info("event=translate_start jobId={} pendingUnits={}", job.getJobId(), pendingExecutions.size());
+                    translateExecutions(pendingExecutions, total, listener);
                 } else {
-                    listener.onLog("♻️ Todos los parrafos ya estaban traducidos en checkpoint. Saltando traduccion.");
+                    listener.onLog("♻️ Todas las unidades ya estaban traducidas en checkpoint. Saltando traduccion.");
                 }
             } catch (CancellationException stop) {
                 safeTransition(job, JobState.INTERRUPTED);
@@ -298,18 +302,18 @@ public class TranslationCoordinatorService {
                     throw stop;
                 }
 
-                int translatedCount = countTranslatedParagraphs(paragraphs);
+                int translatedCount = countTranslatedUnits(executions);
                 if (translatedCount == 0) {
                     listener.onLog("⏹️ Detenido por el usuario. No hay parrafos traducidos para exportar.");
                     throw stop;
                 }
 
                 listener.onLog("⏹️ Detencion solicitada. Exportando avance parcial...");
-                saveCheckpoint(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), paragraphs);
+                saveCheckpoint(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), executions);
                 safeTransition(job, JobState.REBUILDING);
                 pdfRebuilderGateway.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
 
-                updateJobUnitMetrics(job, paragraphs);
+                updateJobUnitMetrics(job, executions);
                 runMetrics.setTranslatedParagraphs(translatedCount);
                 runMetrics.addFallbackParagraphs(Math.max(0, total - translatedCount));
                 String outputPath = moveOutputToPartialPath(pdfFile.getAbsolutePath());
@@ -324,14 +328,14 @@ public class TranslationCoordinatorService {
             }
 
             checkStopRequested(listener);
-            saveCheckpoint(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), paragraphs);
+            saveCheckpoint(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), executions);
             safeTransition(job, JobState.REBUILDING);
             listener.onLog("🧾 Reconstruyendo PDF con layout original...");
             pdfRebuilderGateway.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
             checkpointStore.clear(jobKey);
 
-            updateJobUnitMetrics(job, paragraphs);
-            int translatedCount = countTranslatedParagraphs(paragraphs);
+            updateJobUnitMetrics(job, executions);
+            int translatedCount = countTranslatedUnits(executions);
             runMetrics.setTranslatedParagraphs(translatedCount);
             runMetrics.addFallbackParagraphs(Math.max(0, total - translatedCount));
             safeTransition(job, JobState.COMPLETED);
@@ -381,21 +385,20 @@ public class TranslationCoordinatorService {
         return new ExtractionSnapshot(ocr.paragraphs(), ocr.layoutInfo(), true);
     }
 
-    private void translateParagraphs(
-            List<Paragraph> paragraphs,
-            String targetLanguage,
+    private void translateExecutions(
+            List<TranslationUnitExecution> executions,
+            int totalUnits,
             TranslationEventListener listener
     ) throws InterruptedException, ExecutionException {
-        List<TranslationUnitExecution> executions = buildUnitExecutions(paragraphs, targetLanguage);
         listener.onLog("Traduccion secuencial de unidades habilitada con 1 hilo.");
 
         int total = executions.size();
-        int completed = 0;
-        while (completed < total) {
+        int translatedNow = 0;
+        while (translatedNow < total) {
             checkStopRequested(listener);
             waitWhilePaused(listener);
 
-            TranslationUnitExecution execution = executions.get(completed);
+            TranslationUnitExecution execution = executions.get(translatedNow);
             try {
                 translateExecution(execution);
             } catch (CancellationException e) {
@@ -404,18 +407,24 @@ public class TranslationCoordinatorService {
                 throw new ExecutionException(e);
             }
 
-            completed++;
-            listener.onProgress(new TranslationProgress(completed, total));
-            listener.onLog("Traducida unidad " + completed + "/" + total);
+            translatedNow++;
+            int completedGlobal = totalUnits - total + translatedNow;
+            listener.onProgress(new TranslationProgress(completedGlobal, totalUnits));
+            listener.onLog("Traducida unidad " + completedGlobal + "/" + totalUnits);
         }
     }
 
-    private List<TranslationUnitExecution> buildUnitExecutions(List<Paragraph> paragraphs, String targetLanguage) {
+    private List<TranslationUnitExecution> prepareUnitExecutions(List<Paragraph> paragraphs, String targetLanguage) {
         List<TranslationUnit> units = paragraphToUnitConverter.convert(paragraphs, targetLanguage);
-        List<TranslationUnitExecution> executions = new java.util.ArrayList<>();
+        List<TranslationUnitExecution> executions = new ArrayList<>();
         int size = Math.min(paragraphs.size(), units.size());
         for (int i = 0; i < size; i++) {
-            executions.add(new TranslationUnitExecution(paragraphs.get(i), units.get(i)));
+            Paragraph paragraph = paragraphs.get(i);
+            TranslationUnit unit = units.get(i);
+            String deterministicUnitId = buildDeterministicUnitId(paragraph);
+            unit.putMetadata("deterministic_unit_id", deterministicUnitId);
+            unit.putMetadata("source_index", i);
+            executions.add(new TranslationUnitExecution(i, paragraph, unit));
         }
         return executions;
     }
@@ -504,10 +513,10 @@ public class TranslationCoordinatorService {
         return partialOutputPath;
     }
 
-    private int countTranslatedParagraphs(List<Paragraph> paragraphs) {
+    private int countTranslatedUnits(List<TranslationUnitExecution> executions) {
         int count = 0;
-        for (Paragraph paragraph : paragraphs) {
-            String translated = paragraph.getTranslatedText();
+        for (TranslationUnitExecution execution : executions) {
+            String translated = execution.unit().getTranslatedText();
             if (translated != null && !translated.isBlank()) {
                 count++;
             }
@@ -525,8 +534,8 @@ public class TranslationCoordinatorService {
         job.transitionTo(newState);
     }
 
-    private void updateJobUnitMetrics(TranslationJob job, List<Paragraph> paragraphs) {
-        if (job == null || paragraphs == null) {
+    private void updateJobUnitMetrics(TranslationJob job, List<TranslationUnitExecution> executions) {
+        if (job == null || executions == null) {
             return;
         }
         int completed = job.getCompletedUnits();
@@ -534,12 +543,28 @@ public class TranslationCoordinatorService {
             return;
         }
 
-        for (Paragraph paragraph : paragraphs) {
-            String translated = paragraph.getTranslatedText();
-            boolean ok = translated != null && !translated.isBlank();
-            job.recordUnitCompleted(ok, false);
+        int failed = 0;
+        int skipped = 0;
+        int retried = 0;
+        for (TranslationUnitExecution execution : executions) {
+            TranslationUnit unit = execution.unit();
+            boolean ok = unit != null && unit.isTranslated();
+            boolean unitSkipped = unit != null && unit.isSkipped();
+            job.recordUnitCompleted(ok, unitSkipped);
+            if (unit != null && unit.getState() == UnitState.FAILED) {
+                failed++;
+            }
+            if (unitSkipped) {
+                skipped++;
+            }
+            if (unit != null && unit.getRetryCount() > 0) {
+                retried++;
+            }
         }
-        job.putMetric("translated_units", countTranslatedParagraphs(paragraphs));
+        job.putMetric("translated_units", countTranslatedUnits(executions));
+        job.putMetric("failed_units", failed);
+        job.putMetric("skipped_units", skipped);
+        job.putMetric("retried_units", retried);
     }
 
     private void attachRunMetrics(TranslationJob job, QualityRunMetrics runMetrics) {
@@ -560,7 +585,7 @@ public class TranslationCoordinatorService {
             File pdfFile,
             String targetLanguage,
             boolean usedOcrFallback,
-            List<Paragraph> paragraphs,
+            List<TranslationUnitExecution> executions,
             TranslationEventListener listener
     ) {
         final int[] restoredCounter = {0};
@@ -573,14 +598,14 @@ public class TranslationCoordinatorService {
                 checkpointStore.clear(jobKey);
                 return;
             }
-            if (snapshot.paragraphCount() != paragraphs.size()) {
+            if (snapshot.paragraphCount() != executions.size()) {
                 listener.onLog("♻️ Checkpoint invalido por cambio de estructura. Se ignora y reemplaza.");
                 checkpointStore.clear(jobKey);
                 return;
             }
 
             int restored = 0;
-            Map<Integer, String> currentUnitIdsByIndex = buildUnitIdsByIndex(paragraphs);
+            Map<Integer, String> currentUnitIdsByIndex = buildUnitIdsByIndex(executions);
             Map<String, Integer> currentIndexByUnitId = buildIndexByUnitId(currentUnitIdsByIndex);
 
             for (Map.Entry<String, String> entry : snapshot.translatedByUnitId().entrySet()) {
@@ -590,15 +615,16 @@ public class TranslationCoordinatorService {
                     continue;
                 }
                 Integer mappedIndex = currentIndexByUnitId.get(unitId);
-                if (mappedIndex == null || mappedIndex < 0 || mappedIndex >= paragraphs.size()) {
+                if (mappedIndex == null || mappedIndex < 0 || mappedIndex >= executions.size()) {
                     continue;
                 }
-                Paragraph paragraph = paragraphs.get(mappedIndex);
-                String current = paragraph.getTranslatedText();
+                TranslationUnitExecution execution = executions.get(mappedIndex);
+                String current = execution.unit().getTranslatedText();
                 if (current != null && !current.isBlank()) {
                     continue;
                 }
-                paragraph.setTranslatedText(translated);
+                execution.unit().markTranslated(translated);
+                execution.paragraph().setTranslatedText(translated);
                 restored++;
             }
 
@@ -607,27 +633,28 @@ public class TranslationCoordinatorService {
                         entry.getKey(),
                         snapshot.unitIdsByIndex(),
                         currentIndexByUnitId,
-                        paragraphs.size()
+                        executions.size()
                 );
-                if (index < 0 || index >= paragraphs.size()) {
+                if (index < 0 || index >= executions.size()) {
                     continue;
                 }
                 String translated = entry.getValue();
                 if (translated == null || translated.isBlank()) {
                     continue;
                 }
-                Paragraph paragraph = paragraphs.get(index);
-                String current = paragraph.getTranslatedText();
+                TranslationUnitExecution execution = executions.get(index);
+                String current = execution.unit().getTranslatedText();
                 if (current != null && !current.isBlank()) {
                     continue;
                 }
-                paragraph.setTranslatedText(translated);
+                execution.unit().markTranslated(translated);
+                execution.paragraph().setTranslatedText(translated);
                 restored++;
             }
             restoredCounter[0] = restored;
 
             if (restored > 0) {
-                listener.onLog("♻️ Resume activo: " + restored + " parrafos restaurados desde checkpoint.");
+                listener.onLog("♻️ Resume activo: " + restored + " unidades restauradas desde checkpoint.");
                 if (usedOcrFallback != snapshot.usedOcrFallback()) {
                     listener.onLog("ℹ️ Checkpoint recuperado con modo de extraccion distinto al actual.");
                 }
@@ -636,12 +663,12 @@ public class TranslationCoordinatorService {
         return restoredCounter[0];
     }
 
-    private List<Paragraph> resolvePendingParagraphs(List<Paragraph> paragraphs) {
-        List<Paragraph> pending = new java.util.ArrayList<>();
-        for (Paragraph paragraph : paragraphs) {
-            String translated = paragraph.getTranslatedText();
+    private List<TranslationUnitExecution> resolvePendingExecutions(List<TranslationUnitExecution> executions) {
+        List<TranslationUnitExecution> pending = new ArrayList<>();
+        for (TranslationUnitExecution execution : executions) {
+            String translated = execution.unit().getTranslatedText();
             if (translated == null || translated.isBlank()) {
-                pending.add(paragraph);
+                pending.add(execution);
             }
         }
         return pending;
@@ -652,50 +679,86 @@ public class TranslationCoordinatorService {
             File pdfFile,
             String targetLanguage,
             boolean usedOcrFallback,
-            List<Paragraph> paragraphs
+            List<TranslationUnitExecution> executions
     ) {
         Map<Integer, String> translatedByIndex = new HashMap<>();
-        Map<Integer, String> unitIdsByIndex = buildUnitIdsByIndex(paragraphs);
+        Map<Integer, String> unitIdsByIndex = buildUnitIdsByIndex(executions);
         Map<String, String> translatedByUnitId = new HashMap<>();
         int lastCompletedIndex = -1;
+        String currentUnitId = null;
+        String lastCompletedUnitId = null;
+        Integer currentPage = null;
+        int completedUnitCount = 0;
+        int failedUnitCount = 0;
+        int retriedUnitCount = 0;
+        int skippedUnitCount = 0;
 
-        for (int i = 0; i < paragraphs.size(); i++) {
-            String translated = paragraphs.get(i).getTranslatedText();
-            if (translated == null || translated.isBlank()) {
-                continue;
-            }
-            translatedByIndex.put(i, translated);
+        for (int i = 0; i < executions.size(); i++) {
+            TranslationUnitExecution execution = executions.get(i);
+            TranslationUnit unit = execution.unit();
+            String translated = unit.getTranslatedText();
             String unitId = unitIdsByIndex.get(i);
-            if (unitId != null && !unitId.isBlank()) {
-                translatedByUnitId.put(unitId, translated);
+            if (unit.getRetryCount() > 0) {
+                retriedUnitCount++;
             }
-            lastCompletedIndex = i;
+            if (unit.isSkipped()) {
+                skippedUnitCount++;
+            }
+            if (unit.getState() == UnitState.FAILED) {
+                failedUnitCount++;
+            }
+            if (translated != null && !translated.isBlank()) {
+                translatedByIndex.put(i, translated);
+                completedUnitCount++;
+                lastCompletedIndex = i;
+            }
+            if (unitId != null && !unitId.isBlank()) {
+                if (translated != null && !translated.isBlank()) {
+                    translatedByUnitId.put(unitId, translated);
+                    lastCompletedUnitId = unitId;
+                }
+                if ((translated == null || translated.isBlank()) && currentUnitId == null) {
+                    currentUnitId = unitId;
+                    currentPage = unit.getPageNumber();
+                }
+            }
         }
 
         checkpointStore.save(new CheckpointSnapshot(
                 jobKey,
                 pdfFile.getAbsolutePath(),
                 targetLanguage,
-                paragraphs.size(),
+                executions.size(),
                 lastCompletedIndex,
                 usedOcrFallback,
+                currentPage,
+                currentUnitId,
+                lastCompletedUnitId,
+                completedUnitCount,
+                failedUnitCount,
+                retriedUnitCount,
+                skippedUnitCount,
                 translatedByIndex,
                 unitIdsByIndex,
                 translatedByUnitId
         ));
     }
 
-    private Map<Integer, String> buildUnitIdsByIndex(List<Paragraph> paragraphs) {
+    private Map<Integer, String> buildUnitIdsByIndex(List<TranslationUnitExecution> executions) {
         Map<Integer, String> unitIdsByIndex = new HashMap<>();
-        if (paragraphs == null) {
+        if (executions == null) {
             return unitIdsByIndex;
         }
-        for (int i = 0; i < paragraphs.size(); i++) {
-            Paragraph paragraph = paragraphs.get(i);
-            if (paragraph == null) {
+        for (int i = 0; i < executions.size(); i++) {
+            TranslationUnitExecution execution = executions.get(i);
+            if (execution == null || execution.paragraph() == null || execution.unit() == null) {
                 continue;
             }
-            unitIdsByIndex.put(i, buildDeterministicUnitId(paragraph));
+            String deterministicId = execution.unit().getMetadata("deterministic_unit_id", String.class);
+            if (deterministicId == null || deterministicId.isBlank()) {
+                deterministicId = buildDeterministicUnitId(execution.paragraph());
+            }
+            unitIdsByIndex.put(i, deterministicId);
         }
         return unitIdsByIndex;
     }
@@ -755,7 +818,7 @@ public class TranslationCoordinatorService {
     public record TranslationExecutionOutcome(TranslationResult result, TranslationJob job) {
     }
 
-    private record TranslationUnitExecution(Paragraph paragraph, TranslationUnit unit) {
+    private record TranslationUnitExecution(int index, Paragraph paragraph, TranslationUnit unit) {
     }
 
     @FunctionalInterface
