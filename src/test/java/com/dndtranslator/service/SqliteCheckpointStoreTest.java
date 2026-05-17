@@ -44,6 +44,8 @@ class SqliteCheckpointStoreTest {
         assertEquals("texto-1", loaded.get().translatedByIndex().get(1));
         assertEquals("unit-0", loaded.get().unitIdsByIndex().get(0));
         assertEquals("unit-1", loaded.get().unitIdsByIndex().get(1));
+        assertEquals("texto-0", loaded.get().translatedByUnitId().get("unit-0"));
+        assertEquals("texto-1", loaded.get().translatedByUnitId().get("unit-1"));
 
         store.clear("job-1");
         assertTrue(store.load("job-1").isEmpty());

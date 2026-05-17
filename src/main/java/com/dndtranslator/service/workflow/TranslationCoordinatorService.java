@@ -591,6 +591,26 @@ public class TranslationCoordinatorService {
             int restored = 0;
             Map<Integer, String> currentUnitIdsByIndex = buildUnitIdsByIndex(paragraphs);
             Map<String, Integer> currentIndexByUnitId = buildIndexByUnitId(currentUnitIdsByIndex);
+
+            for (Map.Entry<String, String> entry : snapshot.translatedByUnitId().entrySet()) {
+                String unitId = entry.getKey();
+                String translated = entry.getValue();
+                if (unitId == null || unitId.isBlank() || translated == null || translated.isBlank()) {
+                    continue;
+                }
+                Integer mappedIndex = currentIndexByUnitId.get(unitId);
+                if (mappedIndex == null || mappedIndex < 0 || mappedIndex >= paragraphs.size()) {
+                    continue;
+                }
+                Paragraph paragraph = paragraphs.get(mappedIndex);
+                String current = paragraph.getTranslatedText();
+                if (current != null && !current.isBlank()) {
+                    continue;
+                }
+                paragraph.setTranslatedText(translated);
+                restored++;
+            }
+
             for (Map.Entry<Integer, String> entry : snapshot.translatedByIndex().entrySet()) {
                 int index = resolveRestoreIndex(
                         entry.getKey(),
@@ -605,7 +625,12 @@ public class TranslationCoordinatorService {
                 if (translated == null || translated.isBlank()) {
                     continue;
                 }
-                paragraphs.get(index).setTranslatedText(translated);
+                Paragraph paragraph = paragraphs.get(index);
+                String current = paragraph.getTranslatedText();
+                if (current != null && !current.isBlank()) {
+                    continue;
+                }
+                paragraph.setTranslatedText(translated);
                 restored++;
             }
             restoredCounter[0] = restored;
@@ -640,6 +665,7 @@ public class TranslationCoordinatorService {
     ) {
         Map<Integer, String> translatedByIndex = new HashMap<>();
         Map<Integer, String> unitIdsByIndex = buildUnitIdsByIndex(paragraphs);
+        Map<String, String> translatedByUnitId = new HashMap<>();
         int lastCompletedIndex = -1;
 
         for (int i = 0; i < paragraphs.size(); i++) {
@@ -648,6 +674,10 @@ public class TranslationCoordinatorService {
                 continue;
             }
             translatedByIndex.put(i, translated);
+            String unitId = unitIdsByIndex.get(i);
+            if (unitId != null && !unitId.isBlank()) {
+                translatedByUnitId.put(unitId, translated);
+            }
             lastCompletedIndex = i;
         }
 
@@ -659,7 +689,8 @@ public class TranslationCoordinatorService {
                 lastCompletedIndex,
                 usedOcrFallback,
                 translatedByIndex,
-                unitIdsByIndex
+                unitIdsByIndex,
+                translatedByUnitId
         ));
     }
 
