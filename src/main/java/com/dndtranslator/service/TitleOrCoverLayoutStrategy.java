@@ -15,7 +15,7 @@ public class TitleOrCoverLayoutStrategy extends BasePageLayoutStrategy {
         PageMeta meta = context.getPageMeta();
         PageAnalysisData analysisData = context.getAnalysisData();
         StrategyMargins margins = resolveMargins(meta, TITLE_COVER_MIN_MARGIN, TITLE_COVER_MIN_MARGIN);
-        float boxHeight = resolveCoverBoxHeight(meta, analysisData);
+        float boxHeight = resolveCoverBoxHeight(meta, analysisData, context);
 
         // Portada/titulo: mantenemos visual principal y render de texto minimo.
         LayoutBox bottomBox = new LayoutBox(
@@ -28,7 +28,7 @@ public class TitleOrCoverLayoutStrategy extends BasePageLayoutStrategy {
         context.setPageLayout(new PageLayout(List.of(bottomBox), toBlockedRegions(context.getPageImages())));
     }
 
-    private float resolveCoverBoxHeight(PageMeta meta, PageAnalysisData analysisData) {
+    private float resolveCoverBoxHeight(PageMeta meta, PageAnalysisData analysisData, PageRenderContext context) {
         float ratio = 0.22f;
         if (analysisData != null) {
             if (isUltraVisualCover(analysisData)) {
@@ -39,7 +39,14 @@ public class TitleOrCoverLayoutStrategy extends BasePageLayoutStrategy {
                 ratio = 0.26f;
             }
         }
-        return Math.min(220f, Math.max(60f, meta.getHeight() * ratio));
+
+        if (shouldUseStrongSuppression(analysisData, context)) {
+            ratio = Math.min(ratio, 0.10f);
+        }
+
+        float minHeight = shouldUseStrongSuppression(analysisData, context) ? 48f : 60f;
+        float maxHeight = shouldUseStrongSuppression(analysisData, context) ? 120f : 220f;
+        return Math.min(maxHeight, Math.max(minHeight, meta.getHeight() * ratio));
     }
 
     private boolean isUltraVisualCover(PageAnalysisData analysisData) {
@@ -47,6 +54,20 @@ public class TitleOrCoverLayoutStrategy extends BasePageLayoutStrategy {
                 && analysisData.hasVeryLowTextDensity()
                 && analysisData.estimatedImageAreaRatio() >= 0.55f
                 && analysisData.wordCount() <= 24;
+    }
+
+    private boolean shouldUseStrongSuppression(PageAnalysisData analysisData, PageRenderContext context) {
+        if (analysisData == null) {
+            return context != null && context.hasImages() && !context.hasParagraphs();
+        }
+
+        boolean ultraVisual = isUltraVisualCover(analysisData)
+                || (analysisData.estimatedImageAreaRatio() >= 0.60f && analysisData.wordCount() <= 20);
+
+        int paragraphCount = context == null ? 0 : context.getParagraphs().size();
+        boolean minimalTextContext = paragraphCount <= 1;
+
+        return ultraVisual && minimalTextContext;
     }
 }
 
