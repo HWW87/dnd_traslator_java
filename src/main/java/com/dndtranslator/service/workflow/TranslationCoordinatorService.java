@@ -35,6 +35,7 @@ public class TranslationCoordinatorService {
     private final ParagraphTranslationExecutor paragraphTranslationExecutor;
     private final ParagraphToUnitConverter paragraphToUnitConverter;
     private final TranslatorGateway translatorGateway;
+    private final UnitTranslatorGateway unitTranslatorGateway;
     private final PdfRebuilderGateway pdfRebuilderGateway;
     private final EmbeddedExtractor embeddedExtractor;
     private final OcrExtractor ocrExtractor;
@@ -86,6 +87,7 @@ public class TranslationCoordinatorService {
                 glossaryService,
                 paragraphTranslationExecutor,
                 translatorService::translate,
+                translatorService::translateUnit,
                 pdfRebuilderService::rebuild,
                 pdfPath -> {
                     PdfExtractorService extractor = new PdfExtractorService();
@@ -117,6 +119,7 @@ public class TranslationCoordinatorService {
                 new GlossaryService(),
                 new ParagraphTranslationExecutor(),
                 translatorGateway,
+                null,
                 pdfRebuilderGateway,
                 embeddedExtractor,
                 ocrExtractor,
@@ -142,6 +145,7 @@ public class TranslationCoordinatorService {
                 glossaryService,
                 paragraphTranslationExecutor,
                 translatorGateway,
+                null,
                 pdfRebuilderGateway,
                 embeddedExtractor,
                 ocrExtractor,
@@ -162,12 +166,68 @@ public class TranslationCoordinatorService {
             Runnable shutdownHook,
             CheckpointStore checkpointStore
     ) {
+        this(
+                ocrDecisionPort,
+                textSanitizer,
+                glossaryService,
+                paragraphTranslationExecutor,
+                translatorGateway,
+                null,
+                pdfRebuilderGateway,
+                embeddedExtractor,
+                ocrExtractor,
+                shutdownHook,
+                checkpointStore
+        );
+    }
+
+    public TranslationCoordinatorService(
+            OcrDecisionPort ocrDecisionPort,
+            TextSanitizer textSanitizer,
+            GlossaryService glossaryService,
+            ParagraphTranslationExecutor paragraphTranslationExecutor,
+            TranslatorGateway translatorGateway,
+            UnitTranslatorGateway unitTranslatorGateway,
+            PdfRebuilderGateway pdfRebuilderGateway,
+            EmbeddedExtractor embeddedExtractor,
+            OcrExtractor ocrExtractor,
+            Runnable shutdownHook
+    ) {
+        this(
+                ocrDecisionPort,
+                textSanitizer,
+                glossaryService,
+                paragraphTranslationExecutor,
+                translatorGateway,
+                unitTranslatorGateway,
+                pdfRebuilderGateway,
+                embeddedExtractor,
+                ocrExtractor,
+                shutdownHook,
+                CheckpointStore.noop()
+        );
+    }
+
+    public TranslationCoordinatorService(
+            OcrDecisionPort ocrDecisionPort,
+            TextSanitizer textSanitizer,
+            GlossaryService glossaryService,
+            ParagraphTranslationExecutor paragraphTranslationExecutor,
+            TranslatorGateway translatorGateway,
+            UnitTranslatorGateway unitTranslatorGateway,
+            PdfRebuilderGateway pdfRebuilderGateway,
+            EmbeddedExtractor embeddedExtractor,
+            OcrExtractor ocrExtractor,
+            Runnable shutdownHook,
+            CheckpointStore checkpointStore
+    ) {
         this.ocrDecisionPort = ocrDecisionPort;
         this.textSanitizer = textSanitizer;
         this.glossaryService = glossaryService;
         this.paragraphTranslationExecutor = paragraphTranslationExecutor;
         this.paragraphToUnitConverter = new ParagraphToUnitConverter();
         this.translatorGateway = translatorGateway;
+        this.unitTranslatorGateway = unitTranslatorGateway;
         this.pdfRebuilderGateway = pdfRebuilderGateway;
         this.embeddedExtractor = embeddedExtractor;
         this.ocrExtractor = ocrExtractor;
@@ -375,10 +435,29 @@ public class TranslationCoordinatorService {
 
         String sanitized = textSanitizer.sanitizeForTranslation(unit.getSourceText());
         GlossaryService.GlossaryApplication application = glossaryService.applyBeforeTranslation(sanitized);
-        String translated = translatorGateway.translate(application.text(), unit.getTargetLanguage());
-        String restored = glossaryService.applyAfterTranslation(translated, application);
+        String restored;
 
-        unit.markTranslated(restored);
+        if (unitTranslatorGateway != null) {
+            // Keep pre/post glossary behavior while delegating core translation to canonical unit path.
+            TranslationUnit preparedUnit = new TranslationUnit(
+                    unit.getPageNumber(),
+                    application.text(),
+                    unit.getUnitType(),
+                    unit.getTargetLanguage()
+            );
+            TranslationUnit translatedUnit = unitTranslatorGateway.translate(preparedUnit);
+            String translatedText = translatedUnit == null ? "" : translatedUnit.getTranslatedText();
+            restored = glossaryService.applyAfterTranslation(translatedText, application);
+            unit.markTranslated(restored);
+            if (translatedUnit != null && translatedUnit.getLastError() != null && !translatedUnit.getLastError().isBlank()) {
+                unit.putMetadata("unit_translation_error", translatedUnit.getLastError());
+            }
+        } else {
+            String translated = translatorGateway.translate(application.text(), unit.getTargetLanguage());
+            restored = glossaryService.applyAfterTranslation(translated, application);
+            unit.markTranslated(restored);
+        }
+
         paragraph.setTranslatedText(unit.getTranslatedText());
     }
 
@@ -660,6 +739,11 @@ public class TranslationCoordinatorService {
     @FunctionalInterface
     public interface TranslatorGateway {
         String translate(String text, String targetLanguage);
+    }
+
+    @FunctionalInterface
+    public interface UnitTranslatorGateway {
+        TranslationUnit translate(TranslationUnit unit);
     }
 
     @FunctionalInterface

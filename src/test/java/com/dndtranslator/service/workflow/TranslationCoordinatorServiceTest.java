@@ -1,5 +1,6 @@
 package com.dndtranslator.service.workflow;
 
+import com.dndtranslator.domain.TranslationUnit;
 import com.dndtranslator.model.PageMeta;
 import com.dndtranslator.model.Paragraph;
 import org.junit.jupiter.api.Test;
@@ -196,6 +197,48 @@ class TranslationCoordinatorServiceTest {
                 () -> coordinator.execute(new TranslationRequest(pdf, "Spanish"), new CapturingListener()));
 
         assertTrue(error.getCause() instanceof IllegalStateException);
+    }
+
+    @Test
+    void prefersUnitTranslatorGatewayWhenAvailable() throws Exception {
+        File pdf = createDummyPdf();
+        List<Paragraph> embeddedParagraphs = new ArrayList<>();
+        embeddedParagraphs.add(paragraph("Armor Class 15"));
+
+        AtomicInteger unitGatewayCalls = new AtomicInteger();
+
+        TranslationCoordinatorService coordinator = new TranslationCoordinatorService(
+                (paragraphs, layout) -> false,
+                new TextSanitizer(),
+                new GlossaryService(List.of()),
+                new ParagraphTranslationExecutor(1),
+                (text, lang) -> {
+                    throw new IllegalStateException("text gateway should not be used");
+                },
+                unit -> {
+                    unitGatewayCalls.incrementAndGet();
+                    TranslationUnit translated = new TranslationUnit(
+                            unit.getPageNumber(),
+                            unit.getSourceText(),
+                            unit.getUnitType(),
+                            unit.getTargetLanguage()
+                    );
+                    translated.markTranslated("UNIT:" + unit.getSourceText());
+                    return translated;
+                },
+                (originalPath, paragraphs, layoutInfo) -> {
+                },
+                path -> new TranslationCoordinatorService.ExtractionSnapshot(embeddedParagraphs, onePageLayout()),
+                file -> new TranslationCoordinatorService.ExtractionSnapshot(List.of(), onePageLayout()),
+                () -> {
+                }
+        );
+
+        TranslationResult result = coordinator.execute(new TranslationRequest(pdf, "Spanish"), new CapturingListener());
+
+        assertEquals(1, result.paragraphCount());
+        assertEquals(1, unitGatewayCalls.get());
+        assertEquals("UNIT:Armor Class 15", embeddedParagraphs.get(0).getTranslatedText());
     }
 
     private TranslationCoordinatorService buildCoordinator(
