@@ -209,6 +209,63 @@ class TranslationCoordinatorResumeTest {
         assertEquals("restaurada 1", embeddedParagraphs.get(1).getTranslatedText());
     }
 
+    @Test
+    void resumesFromCurrentUnitBoundaryWhenCheckpointHasCursor() throws Exception {
+        File pdf = createDummyPdf();
+        List<Paragraph> embeddedParagraphs = new ArrayList<>();
+        embeddedParagraphs.add(paragraph("linea 1"));
+        embeddedParagraphs.add(paragraph("linea 2"));
+        embeddedParagraphs.add(paragraph("linea 3"));
+
+        String currentUnitId = deterministicUnitId(embeddedParagraphs.get(1));
+        InMemoryCheckpointStore checkpointStore = new InMemoryCheckpointStore(
+                new CheckpointSnapshot(
+                        pdf.getAbsolutePath() + "|spanish",
+                        pdf.getAbsolutePath(),
+                        "Spanish",
+                        3,
+                        0,
+                        false,
+                        1,
+                        currentUnitId,
+                        deterministicUnitId(embeddedParagraphs.get(0)),
+                        1,
+                        0,
+                        0,
+                        0,
+                        Map.of(),
+                        Map.of(),
+                        Map.of()
+                )
+        );
+
+        AtomicInteger translatorCalls = new AtomicInteger();
+        TranslationCoordinatorService coordinator = new TranslationCoordinatorService(
+                (paragraphs, layout) -> false,
+                new TextSanitizer(),
+                new GlossaryService(List.of()),
+                new ParagraphTranslationExecutor(1),
+                (text, lang) -> {
+                    translatorCalls.incrementAndGet();
+                    return "TR:" + text;
+                },
+                (originalPath, paragraphs, layoutInfo) -> {
+                },
+                path -> new TranslationCoordinatorService.ExtractionSnapshot(embeddedParagraphs, onePageLayout()),
+                file -> new TranslationCoordinatorService.ExtractionSnapshot(List.of(), onePageLayout()),
+                () -> {
+                },
+                checkpointStore
+        );
+
+        coordinator.execute(new TranslationRequest(pdf, "Spanish"), new SilentListener());
+
+        assertEquals(2, translatorCalls.get(), "Debe reanudar desde currentUnitId y traducir desde esa frontera.");
+        assertEquals("", embeddedParagraphs.get(0).getTranslatedText());
+        assertEquals("TR:linea 2", embeddedParagraphs.get(1).getTranslatedText());
+        assertEquals("TR:linea 3", embeddedParagraphs.get(2).getTranslatedText());
+    }
+
     private File createDummyPdf() throws Exception {
         Path pdfPath = tempDir.resolve("resume.pdf");
         Files.writeString(pdfPath, "dummy");

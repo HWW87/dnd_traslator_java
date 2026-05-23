@@ -1,5 +1,7 @@
 package com.dndtranslator.service;
 
+import com.dndtranslator.domain.TranslationUnit;
+import com.dndtranslator.domain.UnitType;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -62,6 +64,26 @@ class PromptBuilderTest {
 
         assertTrue(prompt.contains("DO NOT add markdown fences, apologies, or assistant-style prefacing."));
         assertTrue(prompt.contains("Preserve numbering and leader dots when present."));
+    }
+
+    @Test
+    void buildsPromptForUnitUsingStructuredPageTypeMetadata() {
+        TranslationUnit unit = new TranslationUnit(3, "Long narrative-like sentence", UnitType.PARAGRAPH, "Spanish");
+        unit.putMetadata("page_type", "table_or_index");
+
+        String prompt = promptBuilder.buildPromptForUnit(unit);
+
+        assertTrue(prompt.contains("Preserve numbering and leader dots when present."));
+    }
+
+    @Test
+    void buildsRetryPromptForUnitIncludesRetryContext() {
+        TranslationUnit unit = new TranslationUnit(1, "Armor Class 15", UnitType.SHORT_LABEL, "Spanish");
+        unit.putMetadata("retry_context", "validation=length_ratio,page=1,index=4");
+
+        String prompt = promptBuilder.buildRetryPromptForUnit(unit);
+
+        assertTrue(prompt.contains("Retry context: validation=length_ratio,page=1,index=4"));
     }
 }
 

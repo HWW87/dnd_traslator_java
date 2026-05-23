@@ -1,5 +1,6 @@
 package com.dndtranslator.service;
 
+import com.dndtranslator.domain.UnitType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -22,6 +23,25 @@ class TranslationRetryPolicyTest {
         assertFalse(policy.shouldRetry(retryable, 2, 2));
         assertFalse(policy.shouldRetry(notRetryable, 1, 2));
         assertFalse(policy.shouldRetry(null, 1, 2));
+    }
+
+    @Test
+    void shouldRetryStructuredOnlyForRelevantValidationSignals() {
+        TranslationValidationResult retryableStructured = new TranslationValidationResult(
+                false,
+                true,
+                List.of("BLOCKING: suspicious garbage patterns detected"),
+                0.2d
+        );
+        TranslationValidationResult retryableButNotRelevant = new TranslationValidationResult(
+                false,
+                true,
+                List.of("WARNING: weak Spanish signal 0.01"),
+                0.2d
+        );
+
+        assertTrue(policy.shouldRetry(retryableStructured, 1, 2, UnitType.INDEX_LINE, "table_or_index"));
+        assertFalse(policy.shouldRetry(retryableButNotRelevant, 1, 2, UnitType.INDEX_LINE, "table_or_index"));
     }
 
     @Test
