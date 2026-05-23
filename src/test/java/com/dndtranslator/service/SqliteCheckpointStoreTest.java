@@ -47,6 +47,7 @@ class SqliteCheckpointStoreTest {
         assertEquals("C:/tmp/sample.pdf", loaded.get().pdfPath());
         assertEquals("Spanish", loaded.get().targetLanguage());
         assertEquals(3, loaded.get().paragraphCount());
+        assertEquals(3, loaded.get().unitCount());
         assertEquals(1, loaded.get().lastCompletedIndex());
         assertEquals("texto-0", loaded.get().translatedByIndex().get(0));
         assertEquals("texto-1", loaded.get().translatedByIndex().get(1));
@@ -58,6 +59,7 @@ class SqliteCheckpointStoreTest {
         assertEquals("unit-2", loaded.get().currentUnitId());
         assertEquals("unit-1", loaded.get().lastCompletedUnitId());
         assertEquals(2, loaded.get().completedUnitCount());
+        assertEquals(2, loaded.get().translatedUnitCount());
         assertEquals(1, loaded.get().retriedUnitCount());
 
         store.clear("job-1");

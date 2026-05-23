@@ -6,6 +6,7 @@ import net.sourceforge.tess4j.ITessAPI;
 import net.sourceforge.tess4j.ITesseract;
 import net.sourceforge.tess4j.Tesseract;
 import net.sourceforge.tess4j.Word;
+import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
 
@@ -73,7 +74,7 @@ public class PdfToParagraphService {
         float ocrToPdfUnits = 72f / ocrDpi;
         ITesseract tesseract = createTesseract();
 
-        try (PDDocument document = PDDocument.load(pdf)) {
+        try (PDDocument document = Loader.loadPDF(pdf)) {
             PDFRenderer renderer = new PDFRenderer(document);
             int totalPages = document.getNumberOfPages();
 

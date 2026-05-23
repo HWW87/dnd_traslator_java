@@ -10,6 +10,7 @@ import org.apache.pdfbox.contentstream.operator.state.SetMatrix;
 import org.apache.pdfbox.contentstream.operator.DrawObject;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDResources;
@@ -38,7 +39,7 @@ public class PdfImageExtractor {
     private static final Logger logger = LoggerFactory.getLogger(PdfImageExtractor.class);
 
     public Map<Integer, List<PdfImagePlacement>> extract(String pdfPath) throws IOException {
-        try (PDDocument document = PDDocument.load(new File(pdfPath))) {
+        try (PDDocument document = Loader.loadPDF(new File(pdfPath))) {
             return extract(document);
         }
     }
@@ -172,12 +173,12 @@ public class PdfImageExtractor {
         private PageImageCollector(int pageNumber, PDRectangle mediaBox) {
             this.pageNumber = pageNumber;
             this.mediaBox = mediaBox;
-            addOperator(new Concatenate());
-            addOperator(new DrawObject());
-            addOperator(new SetGraphicsStateParameters());
-            addOperator(new Save());
-            addOperator(new Restore());
-            addOperator(new SetMatrix());
+            addOperator(new Concatenate(this));
+            addOperator(new DrawObject(this));
+            addOperator(new SetGraphicsStateParameters(this));
+            addOperator(new Save(this));
+            addOperator(new Restore(this));
+            addOperator(new SetMatrix(this));
         }
 
         @Override

@@ -8,8 +8,11 @@
   - Maneja pausa/detencion con `AtomicBoolean`.
 ## Orquestacion de workflow
 - `TranslationCoordinatorService`
-  - Caso de uso central.
-  - Encadena extraccion, decision OCR, traduccion y rebuild.
+  - Orquestador unico de la ejecucion de traduccion.
+  - Encadena extraccion, decision OCR, preparacion de unidades, traduccion, checkpoint y rebuild.
+- `TranslationCoordinatorRuntimeWiring`
+  - Borde de composicion runtime.
+  - Resuelve provider con `TranslationProviderFactory` y construye dependencias concretas.
 - `TranslationRequest` / `TranslationResult`
   - DTOs inmutables del flujo.
 - `TranslationEventListener` / `TranslationProgress`
@@ -37,20 +40,23 @@
   - Construye `Paragraph` + `PageMeta` desde imagen.
 ## Traduccion y cache
 - `TranslatorService`
-  - Cliente HTTP para Ollama (`/api/generate`, `/api/tags`).
-  - Segmentacion de texto largo.
-  - Reintentos de red y limpieza de salida.
+  - Servicio provider-agnostic basado en `TranslationProvider`.
+  - Traduccion por texto y ruta canonica `translateUnit`.
+  - Prompting unit-aware, retry policy y validacion/sanitizacion de salida.
   - Cache en SQLite (`translations.db`).
 - `ParagraphTranslationExecutor`
-  - Paraleliza traduccion por parrafo y publica progreso.
+  - Componente legacy mantenido por compatibilidad.
+  - No es la ruta principal de orquestacion actual.
 ## Reconstruccion PDF
 - `PdfRebuilderService`
   - Genera PDF de salida preservando layout base.
   - Gestiona fuentes y fallback CJK.
   - Aplica sanitizacion por glifo.
 ## Modelos de dominio
+- `TranslationUnit`
+  - Unidad canonica de trabajo en runtime (tipo, estado, retry, metadata).
 - `Paragraph`
-  - Texto original, texto traducido, pagina, posicion y fuente.
+  - Artefacto de extraccion y correlacion visual para rebuild.
 - `PageMeta`
   - Ancho/alto pagina, margenes, columnas, `splitX`.
 - `TextBlock`

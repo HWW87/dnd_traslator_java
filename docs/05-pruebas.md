@@ -11,6 +11,11 @@ Archivos relevantes:
 - `TextSanitizerTest`
 - `TranslationCoordinatorServiceTest`
 - `TranslationCoordinatorServiceMockitoTest`
+- `TranslationCoordinatorResumeTest`
+- `TranslationCoordinatorRuntimeWiringTest`
+- `TranslatorServiceUnitCanonicalTest`
+- `TranslatorServiceProviderTest`
+- `TranslationProviderFactoryTest`
 
 ## Que valida cada bloque
 
@@ -32,18 +37,29 @@ Archivos relevantes:
 - Coordinador con Mockito:
   - interacciones con gateways
   - uso de OCR segun decision
+- Resume/checkpoint unit-aware:
+  - restauracion por `unitId`
+  - cursor por `currentUnitId`/`lastCompletedUnitId`
+  - salto a siguiente unidad pendiente real
+- Wiring runtime/provider:
+  - resolucion de provider centralizada en `TranslationCoordinatorRuntimeWiring`
+  - politica default en `TranslationProviderFactory`
+- Ruta canonica por unidad:
+  - `TranslatorService.translateUnit(...)`
+  - prompts unit-aware y retry context
 
 ## Ejecutar pruebas
 
 ```powershell
-mvn test
+.\mvnw.cmd test
 ```
 
 ## Ejecutar una clase puntual
 
 ```powershell
-mvn -Dtest=TranslationCoordinatorServiceTest test
-mvn -Dtest=GlossaryServiceTest test
+.\mvnw.cmd "-Dtest=TranslationCoordinatorServiceTest" test
+.\mvnw.cmd "-Dtest=TranslationCoordinatorResumeTest,TranslationCoordinatorRuntimeWiringTest" test
+.\mvnw.cmd "-Dtest=TranslatorServiceUnitCanonicalTest,TranslatorServiceProviderTest,TranslationProviderFactoryTest" test
 ```
 
 ## Recomendaciones para nuevas pruebas

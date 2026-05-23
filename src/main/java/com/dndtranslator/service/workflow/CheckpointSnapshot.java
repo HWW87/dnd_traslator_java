@@ -119,5 +119,25 @@ public record CheckpointSnapshot(
                 translatedByUnitId
         );
     }
+
+    /**
+     * Alias unit-first para compatibilidad gradual con payload/columna legacy paragraph_count.
+     */
+    public int unitCount() {
+        return paragraphCount;
+    }
+
+    /**
+     * Cantidad de unidades traducidas conocidas por el snapshot.
+     */
+    public int translatedUnitCount() {
+        if (completedUnitCount > 0) {
+            return completedUnitCount;
+        }
+        if (!translatedByUnitId.isEmpty()) {
+            return translatedByUnitId.size();
+        }
+        return translatedByIndex.size();
+    }
 }
 
