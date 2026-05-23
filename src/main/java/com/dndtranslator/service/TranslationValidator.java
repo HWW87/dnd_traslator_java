@@ -176,6 +176,33 @@ public class TranslationValidator {
         return new TranslationValidationResult(valid, shouldRetry, List.copyOf(issues), confidence);
     }
 
+    public TranslationValidationResult validateStructuredContent(String originalText, String translatedText) {
+        TranslationValidationResult base = validate(originalText, translatedText);
+        List<String> mergedIssues = new ArrayList<>(base.issues());
+        boolean blocking = !base.valid();
+        boolean shouldRetry = base.shouldRetry();
+        double confidence = base.confidenceScore();
+
+        if (originalText == null || translatedText == null) {
+            return base;
+        }
+
+        if (hasLeaderDotsOrTrailingNumber(originalText) && !hasLeaderDotsOrTrailingNumber(translatedText)) {
+            mergedIssues.add("WARNING: structured numbering/leader pattern not preserved");
+            confidence -= 0.10d;
+        }
+
+        if (isShortStructuredLine(originalText) && translatedText.length() > Math.max(80, originalText.length() * 3)) {
+            mergedIssues.add("BLOCKING: structured short line expanded excessively");
+            blocking = true;
+            shouldRetry = true;
+            confidence -= 0.20d;
+        }
+
+        confidence = clamp(confidence, 0.0d, 1.0d);
+        return new TranslationValidationResult(!blocking, shouldRetry, List.copyOf(mergedIssues), confidence);
+    }
+
     public boolean containsForbiddenPatterns(String text) {
         if (text == null || text.isBlank()) {
             return false;
@@ -278,6 +305,21 @@ public class TranslationValidator {
 
     private boolean isBlankTranslation(String text) {
         return text == null || text.isBlank();
+    }
+
+    private boolean hasLeaderDotsOrTrailingNumber(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        return text.matches(".*\\.{2,}\\s*\\d{1,4}\\s*$") || text.matches(".*\\b\\d{1,4}\\s*$");
+    }
+
+    private boolean isShortStructuredLine(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String trimmed = text.trim();
+        return trimmed.length() <= 60 && (trimmed.matches(".*\\d{1,4}\\s*$") || trimmed.contains("...."));
     }
 
     private double lengthRatio(String originalText, String translatedText) {

@@ -271,7 +271,7 @@ public class TranslationCoordinatorService {
             runMetrics.setTotalParagraphs(total);
             runMetrics.setUsedOcrFallback(extraction.usedOcrFallback());
 
-            int restoredFromCheckpoint = restoreCheckpointIfAvailable(
+            RestoreCheckpointOutcome restoreOutcome = restoreCheckpointIfAvailable(
                     jobKey,
                     pdfFile,
                     targetLanguage,
@@ -279,6 +279,7 @@ public class TranslationCoordinatorService {
                     executions,
                     listener
             );
+            int restoredFromCheckpoint = restoreOutcome.restoredCount();
             runMetrics.addResumedParagraphs(restoredFromCheckpoint);
             if (debugMode && restoredFromCheckpoint > 0) {
                 logger.info("event=checkpoint_restore jobId={} restoredParagraphs={} usedOcrFallback={}",
@@ -289,7 +290,10 @@ public class TranslationCoordinatorService {
 
             try {
                 safeTransition(job, JobState.TRANSLATING);
-                List<TranslationUnitExecution> pendingExecutions = resolvePendingExecutions(executions);
+                List<TranslationUnitExecution> pendingExecutions = resolvePendingExecutions(
+                        executions,
+                        restoreOutcome.resumeStartIndex()
+                );
                 if (!pendingExecutions.isEmpty()) {
                     logger.info("event=translate_start jobId={} pendingUnits={}", job.getJobId(), pendingExecutions.size());
                     translateExecutions(pendingExecutions, total, listener);
@@ -424,9 +428,34 @@ public class TranslationCoordinatorService {
             String deterministicUnitId = buildDeterministicUnitId(paragraph);
             unit.putMetadata("deterministic_unit_id", deterministicUnitId);
             unit.putMetadata("source_index", i);
+            unit.putMetadata("page_type", inferPageTypeForUnit(unit));
+            unit.putMetadata("retry_context", buildRetryContext(unit, i));
             executions.add(new TranslationUnitExecution(i, paragraph, unit));
         }
         return executions;
+    }
+
+    private String inferPageTypeForUnit(TranslationUnit unit) {
+        if (unit == null || unit.getUnitType() == null) {
+            return "unknown";
+        }
+        return switch (unit.getUnitType()) {
+            case INDEX_LINE, TABLE_CELL -> "table_or_index";
+            case MAP_LABEL -> "map_page";
+            case SHORT_LABEL -> unit.getPageNumber() == 1 ? "title_or_cover" : "mixed_layout";
+            case LEGAL_TEXT -> "text_heavy";
+            case PARAGRAPH -> "text_heavy";
+            case UNKNOWN -> "unknown";
+        };
+    }
+
+    private String buildRetryContext(TranslationUnit unit, int index) {
+        if (unit == null) {
+            return "";
+        }
+        return "page=" + unit.getPageNumber()
+                + ",index=" + index
+                + ",unitType=" + unit.getUnitType();
     }
 
     private void translateExecution(TranslationUnitExecution execution) {
@@ -580,7 +609,7 @@ public class TranslationCoordinatorService {
         return pdfFile.getAbsolutePath() + "|" + (targetLanguage == null ? "" : targetLanguage.trim().toLowerCase());
     }
 
-    private int restoreCheckpointIfAvailable(
+    private RestoreCheckpointOutcome restoreCheckpointIfAvailable(
             String jobKey,
             File pdfFile,
             String targetLanguage,
@@ -589,6 +618,7 @@ public class TranslationCoordinatorService {
             TranslationEventListener listener
     ) {
         final int[] restoredCounter = {0};
+        final int[] resumeStartIndex = {-1};
         checkpointStore.load(jobKey).ifPresent(snapshot -> {
             if (!pdfFile.getAbsolutePath().equals(snapshot.pdfPath())) {
                 checkpointStore.clear(jobKey);
@@ -607,6 +637,7 @@ public class TranslationCoordinatorService {
             int restored = 0;
             Map<Integer, String> currentUnitIdsByIndex = buildUnitIdsByIndex(executions);
             Map<String, Integer> currentIndexByUnitId = buildIndexByUnitId(currentUnitIdsByIndex);
+            resumeStartIndex[0] = resolveResumeStartIndex(snapshot, currentIndexByUnitId, executions.size());
 
             for (Map.Entry<String, String> entry : snapshot.translatedByUnitId().entrySet()) {
                 String unitId = entry.getKey();
@@ -660,12 +691,44 @@ public class TranslationCoordinatorService {
                 }
             }
         });
-        return restoredCounter[0];
+        return new RestoreCheckpointOutcome(restoredCounter[0], resumeStartIndex[0]);
     }
 
-    private List<TranslationUnitExecution> resolvePendingExecutions(List<TranslationUnitExecution> executions) {
+    private int resolveResumeStartIndex(
+            CheckpointSnapshot snapshot,
+            Map<String, Integer> currentIndexByUnitId,
+            int executionSize
+    ) {
+        if (snapshot == null) {
+            return -1;
+        }
+
+        String currentUnitId = snapshot.currentUnitId();
+        if (currentUnitId != null && !currentUnitId.isBlank()) {
+            Integer mapped = currentIndexByUnitId.get(currentUnitId);
+            if (mapped != null && mapped >= 0 && mapped < executionSize) {
+                return mapped;
+            }
+        }
+
+        String lastCompletedUnitId = snapshot.lastCompletedUnitId();
+        if (lastCompletedUnitId != null && !lastCompletedUnitId.isBlank()) {
+            Integer mapped = currentIndexByUnitId.get(lastCompletedUnitId);
+            if (mapped != null && mapped >= 0 && mapped + 1 < executionSize) {
+                return mapped + 1;
+            }
+        }
+
+
+        return -1;
+    }
+
+    private List<TranslationUnitExecution> resolvePendingExecutions(List<TranslationUnitExecution> executions, int resumeStartIndex) {
         List<TranslationUnitExecution> pending = new ArrayList<>();
         for (TranslationUnitExecution execution : executions) {
+            if (resumeStartIndex >= 0 && execution.index() < resumeStartIndex) {
+                continue;
+            }
             String translated = execution.unit().getTranslatedText();
             if (translated == null || translated.isBlank()) {
                 pending.add(execution);
@@ -819,6 +882,9 @@ public class TranslationCoordinatorService {
     }
 
     private record TranslationUnitExecution(int index, Paragraph paragraph, TranslationUnit unit) {
+    }
+
+    private record RestoreCheckpointOutcome(int restoredCount, int resumeStartIndex) {
     }
 
     @FunctionalInterface

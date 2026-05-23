@@ -98,5 +98,27 @@ class TranslationValidatorTest {
         assertTrue(result.shouldRetry());
         assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("markdown fences")));
     }
+
+    @Test
+    void warnsWhenStructuredNumberingPatternIsNotPreserved() {
+        TranslationValidationResult result = validator.validateStructuredContent(
+                "Chapter One........12",
+                "Capitulo Uno"
+        );
+
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("structured numbering")));
+    }
+
+    @Test
+    void blocksWhenStructuredShortLineExpandsTooMuch() {
+        TranslationValidationResult result = validator.validateStructuredContent(
+                "Armor Class 15",
+                "Clase de Armadura quince con descripcion extendida innecesaria para una linea corta de etiqueta"
+        );
+
+        assertFalse(result.valid());
+        assertTrue(result.shouldRetry());
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("expanded excessively")));
+    }
 }
 
