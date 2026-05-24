@@ -20,16 +20,21 @@ public class ParagraphToUnitConverter {
             return units;
         }
 
-        for (Paragraph paragraph : paragraphs) {
+        for (int index = 0; index < paragraphs.size(); index++) {
+            Paragraph paragraph = paragraphs.get(index);
             if (paragraph == null) {
                 continue;
             }
-            units.add(toUnit(paragraph, targetLanguage));
+            units.add(toUnit(paragraph, targetLanguage, index));
         }
         return units;
     }
 
     public TranslationUnit toUnit(Paragraph paragraph, String targetLanguage) {
+        return toUnit(paragraph, targetLanguage, -1);
+    }
+
+    private TranslationUnit toUnit(Paragraph paragraph, String targetLanguage, int sourceIndex) {
         String sourceText = paragraph.getFullText() == null ? "" : paragraph.getFullText();
         TranslationUnit unit = new TranslationUnit(
                 paragraph.getPage(),
@@ -43,7 +48,20 @@ public class ParagraphToUnitConverter {
         unit.putMetadata("paragraph_y", paragraph.getY());
         unit.putMetadata("paragraph_font", paragraph.getFontName());
         unit.putMetadata("paragraph_font_size", paragraph.getFontSize());
+        unit.putMetadata("deterministic_unit_id", buildDeterministicUnitId(paragraph));
+        if (sourceIndex >= 0) {
+            unit.putMetadata("source_index", sourceIndex);
+        }
         return unit;
+    }
+
+    private String buildDeterministicUnitId(Paragraph paragraph) {
+        String text = paragraph.getFullText();
+        String normalizedText = text == null ? "" : text.trim().replaceAll("\\s+", " ");
+        int textHash = normalizedText.hashCode();
+        int roundedX = Math.round(paragraph.getX());
+        int roundedY = Math.round(paragraph.getY());
+        return "p" + paragraph.getPage() + "-x" + roundedX + "-y" + roundedY + "-h" + Integer.toHexString(textHash);
     }
 
     private UnitType inferUnitType(String text) {

@@ -41,7 +41,6 @@ final class TranslationCoordinatorRuntimeWiring {
                 new OcrDecisionService(),
                 new TextSanitizer(),
                 new GlossaryService(),
-                new ParagraphTranslationExecutor(),
                 new SqliteCheckpointStore()
         );
     }
@@ -52,14 +51,12 @@ final class TranslationCoordinatorRuntimeWiring {
             OcrDecisionService ocrDecisionService,
             TextSanitizer textSanitizer,
             GlossaryService glossaryService,
-            ParagraphTranslationExecutor paragraphTranslationExecutor,
             CheckpointStore checkpointStore
     ) {
         return new RuntimeDependencies(
                 ocrDecisionService::shouldUseOcrFallback,
                 textSanitizer,
                 glossaryService,
-                paragraphTranslationExecutor,
                 translatorService::translate,
                 translatorService::translateUnit,
                 pdfRebuilderService::rebuild,
@@ -83,7 +80,6 @@ final class TranslationCoordinatorRuntimeWiring {
             TranslationCoordinatorService.OcrDecisionPort ocrDecisionPort,
             TextSanitizer textSanitizer,
             GlossaryService glossaryService,
-            ParagraphTranslationExecutor paragraphTranslationExecutor,
             TranslationCoordinatorService.TranslatorGateway translatorGateway,
             TranslationCoordinatorService.UnitTranslatorGateway unitTranslatorGateway,
             TranslationCoordinatorService.PdfRebuilderGateway pdfRebuilderGateway,

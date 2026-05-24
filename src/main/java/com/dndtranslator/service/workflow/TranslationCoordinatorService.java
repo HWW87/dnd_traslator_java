@@ -49,8 +49,7 @@ public class TranslationCoordinatorService {
             TranslatorService translatorService,
             PdfRebuilderService pdfRebuilderService,
             OcrDecisionService ocrDecisionService,
-            TextSanitizer textSanitizer,
-            ParagraphTranslationExecutor paragraphTranslationExecutor
+            TextSanitizer textSanitizer
     ) {
         this(
                 translatorService,
@@ -58,7 +57,6 @@ public class TranslationCoordinatorService {
                 ocrDecisionService,
                 textSanitizer,
                 new GlossaryService(),
-                paragraphTranslationExecutor,
                 CheckpointStore.noop()
         );
     }
@@ -69,7 +67,6 @@ public class TranslationCoordinatorService {
             OcrDecisionService ocrDecisionService,
             TextSanitizer textSanitizer,
             GlossaryService glossaryService,
-            ParagraphTranslationExecutor paragraphTranslationExecutor,
             CheckpointStore checkpointStore
     ) {
         this(TranslationCoordinatorRuntimeWiring.fromServices(
@@ -78,7 +75,6 @@ public class TranslationCoordinatorService {
                 ocrDecisionService,
                 textSanitizer,
                 glossaryService,
-                paragraphTranslationExecutor,
                 checkpointStore
         ));
     }
@@ -88,7 +84,6 @@ public class TranslationCoordinatorService {
                 runtimeDependencies.ocrDecisionPort(),
                 runtimeDependencies.textSanitizer(),
                 runtimeDependencies.glossaryService(),
-                runtimeDependencies.paragraphTranslationExecutor(),
                 runtimeDependencies.translatorGateway(),
                 runtimeDependencies.unitTranslatorGateway(),
                 runtimeDependencies.pdfRebuilderGateway(),
@@ -113,7 +108,6 @@ public class TranslationCoordinatorService {
                 extractionQualityEvaluator::shouldUseOcrFallback,
                 textSanitizer,
                 new GlossaryService(),
-                new ParagraphTranslationExecutor(),
                 translatorGateway,
                 null,
                 pdfRebuilderGateway,
@@ -128,7 +122,6 @@ public class TranslationCoordinatorService {
             OcrDecisionPort ocrDecisionPort,
             TextSanitizer textSanitizer,
             GlossaryService glossaryService,
-            ParagraphTranslationExecutor paragraphTranslationExecutor,
             TranslatorGateway translatorGateway,
             PdfRebuilderGateway pdfRebuilderGateway,
             EmbeddedExtractor embeddedExtractor,
@@ -139,7 +132,6 @@ public class TranslationCoordinatorService {
                 ocrDecisionPort,
                 textSanitizer,
                 glossaryService,
-                paragraphTranslationExecutor,
                 translatorGateway,
                 null,
                 pdfRebuilderGateway,
@@ -154,7 +146,6 @@ public class TranslationCoordinatorService {
             OcrDecisionPort ocrDecisionPort,
             TextSanitizer textSanitizer,
             GlossaryService glossaryService,
-            ParagraphTranslationExecutor paragraphTranslationExecutor,
             TranslatorGateway translatorGateway,
             PdfRebuilderGateway pdfRebuilderGateway,
             EmbeddedExtractor embeddedExtractor,
@@ -166,7 +157,6 @@ public class TranslationCoordinatorService {
                 ocrDecisionPort,
                 textSanitizer,
                 glossaryService,
-                paragraphTranslationExecutor,
                 translatorGateway,
                 null,
                 pdfRebuilderGateway,
@@ -181,7 +171,6 @@ public class TranslationCoordinatorService {
             OcrDecisionPort ocrDecisionPort,
             TextSanitizer textSanitizer,
             GlossaryService glossaryService,
-            ParagraphTranslationExecutor paragraphTranslationExecutor,
             TranslatorGateway translatorGateway,
             UnitTranslatorGateway unitTranslatorGateway,
             PdfRebuilderGateway pdfRebuilderGateway,
@@ -193,7 +182,6 @@ public class TranslationCoordinatorService {
                 ocrDecisionPort,
                 textSanitizer,
                 glossaryService,
-                paragraphTranslationExecutor,
                 translatorGateway,
                 unitTranslatorGateway,
                 pdfRebuilderGateway,
@@ -208,7 +196,6 @@ public class TranslationCoordinatorService {
             OcrDecisionPort ocrDecisionPort,
             TextSanitizer textSanitizer,
             GlossaryService glossaryService,
-            ParagraphTranslationExecutor paragraphTranslationExecutor,
             TranslatorGateway translatorGateway,
             UnitTranslatorGateway unitTranslatorGateway,
             PdfRebuilderGateway pdfRebuilderGateway,
@@ -221,7 +208,6 @@ public class TranslationCoordinatorService {
                 ocrDecisionPort,
                 textSanitizer,
                 glossaryService,
-                paragraphTranslationExecutor,
                 translatorGateway,
                 unitTranslatorGateway,
                 pdfRebuilderGateway,
@@ -237,7 +223,6 @@ public class TranslationCoordinatorService {
             OcrDecisionPort ocrDecisionPort,
             TextSanitizer textSanitizer,
             GlossaryService glossaryService,
-            ParagraphTranslationExecutor paragraphTranslationExecutor,
             TranslatorGateway translatorGateway,
             UnitTranslatorGateway unitTranslatorGateway,
             PdfRebuilderGateway pdfRebuilderGateway,
@@ -320,7 +305,7 @@ public class TranslationCoordinatorService {
                         job.getJobId(), restoredFromCheckpoint, extraction.usedOcrFallback());
             }
 
-            listener.onLog("📄 Parrafos detectados: " + total);
+            listener.onLog("📄 Unidades detectadas: " + total);
 
             try {
                 safeTransition(job, JobState.TRANSLATING);
@@ -342,21 +327,21 @@ public class TranslationCoordinatorService {
 
                 int translatedCount = countTranslatedUnits(executions);
                 if (translatedCount == 0) {
-                    listener.onLog("⏹️ Detenido por el usuario. No hay parrafos traducidos para exportar.");
+                    listener.onLog("⏹️ Detenido por el usuario. No hay unidades traducidas para exportar.");
                     throw stop;
                 }
 
                 listener.onLog("⏹️ Detencion solicitada. Exportando avance parcial...");
                 saveCheckpoint(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), executions);
                 safeTransition(job, JobState.REBUILDING);
-                syncTranslatedTextToParagraphs(executions);
+                syncTranslatedTextToParagraphs(paragraphs, executions);
                 pdfRebuilderGateway.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
 
                 updateJobUnitMetrics(job, executions);
                 runMetrics.setTranslatedUnits(translatedCount);
                 runMetrics.addFallbackUnits(Math.max(0, total - translatedCount));
                 String outputPath = moveOutputToPartialPath(pdfFile.getAbsolutePath());
-                listener.onLog("✅ PDF parcial generado con " + translatedCount + " parrafos traducidos.");
+                listener.onLog("✅ PDF parcial generado con " + translatedCount + " unidades traducidas.");
                 attachRunMetrics(job, runMetrics);
                 logger.info("event=job_partial_export jobId={} translated={} total={} output={}",
                         job.getJobId(), translatedCount, total, outputPath);
@@ -370,7 +355,7 @@ public class TranslationCoordinatorService {
             saveCheckpoint(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), executions);
             safeTransition(job, JobState.REBUILDING);
             listener.onLog("🧾 Reconstruyendo PDF con layout original...");
-            syncTranslatedTextToParagraphs(executions);
+            syncTranslatedTextToParagraphs(paragraphs, executions);
             pdfRebuilderGateway.rebuild(pdfFile.getAbsolutePath(), paragraphs, layoutInfo);
             checkpointStore.clear(jobKey);
 
@@ -456,24 +441,30 @@ public class TranslationCoordinatorService {
 
     private TranslationUnitPreparation prepareTranslationUnitStage(List<Paragraph> paragraphs, String targetLanguage) {
         List<TranslationUnit> units = paragraphToUnitConverter.convert(paragraphs, targetLanguage);
-        List<TranslationUnitExecution> executions = createUnitExecutions(paragraphs, units);
+        List<TranslationUnitExecution> executions = createUnitExecutions(units);
         return new TranslationUnitPreparation(units, executions);
     }
 
-    private List<TranslationUnitExecution> createUnitExecutions(List<Paragraph> paragraphs, List<TranslationUnit> units) {
+    private List<TranslationUnitExecution> createUnitExecutions(List<TranslationUnit> units) {
         List<TranslationUnitExecution> executions = new ArrayList<>();
-        int paragraphSize = paragraphs == null ? 0 : paragraphs.size();
         int unitSize = units == null ? 0 : units.size();
-        int size = Math.min(paragraphSize, unitSize);
-        for (int i = 0; i < size; i++) {
-            Paragraph paragraph = paragraphs.get(i);
+        for (int i = 0; i < unitSize; i++) {
             TranslationUnit unit = units.get(i);
-            String deterministicUnitId = buildDeterministicUnitId(paragraph);
+            if (unit == null) {
+                continue;
+            }
+            String deterministicUnitId = unit.getMetadata("deterministic_unit_id", String.class);
+            if (deterministicUnitId == null || deterministicUnitId.isBlank()) {
+                deterministicUnitId = "u" + unit.getPageNumber() + "-i" + i + "-h" + Integer.toHexString(unit.getSourceText().hashCode());
+            }
             unit.putMetadata("deterministic_unit_id", deterministicUnitId);
-            unit.putMetadata("source_index", i);
+            Integer sourceIndex = unit.getMetadata("source_index", Integer.class);
+            if (sourceIndex == null || sourceIndex < 0) {
+                unit.putMetadata("source_index", i);
+            }
             unit.putMetadata("page_type", inferPageTypeForUnit(unit));
             unit.putMetadata("retry_context", buildRetryContext(unit, i));
-            executions.add(new TranslationUnitExecution(i, unit, paragraph));
+            executions.add(new TranslationUnitExecution(i, unit));
         }
         return executions;
     }
@@ -530,19 +521,23 @@ public class TranslationCoordinatorService {
         }
     }
 
-    private void syncTranslatedTextToParagraphs(List<TranslationUnitExecution> executions) {
-        if (executions == null) {
+    private void syncTranslatedTextToParagraphs(List<Paragraph> paragraphs, List<TranslationUnitExecution> executions) {
+        if (paragraphs == null || executions == null) {
             return;
         }
         for (TranslationUnitExecution execution : executions) {
-            if (execution == null || execution.paragraphRef() == null || execution.unit() == null) {
+            if (execution == null || execution.unit() == null) {
                 continue;
             }
             String translated = execution.unit().getTranslatedText();
             if (translated == null) {
                 continue;
             }
-            execution.paragraphRef().setTranslatedText(translated);
+            Integer sourceIndex = execution.unit().getMetadata("source_index", Integer.class);
+            if (sourceIndex == null || sourceIndex < 0 || sourceIndex >= paragraphs.size()) {
+                continue;
+            }
+            paragraphs.get(sourceIndex).setTranslatedText(translated);
         }
     }
 
@@ -907,12 +902,12 @@ public class TranslationCoordinatorService {
         }
         for (int i = 0; i < executions.size(); i++) {
             TranslationUnitExecution execution = executions.get(i);
-            if (execution == null || execution.paragraphRef() == null || execution.unit() == null) {
+            if (execution == null || execution.unit() == null) {
                 continue;
             }
             String deterministicId = execution.unit().getMetadata("deterministic_unit_id", String.class);
             if (deterministicId == null || deterministicId.isBlank()) {
-                deterministicId = buildDeterministicUnitId(execution.paragraphRef());
+                deterministicId = execution.unit().getId();
             }
             unitIdsByIndex.put(i, deterministicId);
         }
@@ -938,27 +933,18 @@ public class TranslationCoordinatorService {
             int fallbackIndex,
             Map<Integer, String> checkpointUnitIdsByIndex,
             Map<String, Integer> currentIndexByUnitId,
-            int paragraphCount
+            int executionCount
     ) {
         if (checkpointUnitIdsByIndex != null) {
             String checkpointUnitId = checkpointUnitIdsByIndex.get(fallbackIndex);
             if (checkpointUnitId != null && !checkpointUnitId.isBlank()) {
                 Integer mappedIndex = currentIndexByUnitId.get(checkpointUnitId);
-                if (mappedIndex != null && mappedIndex >= 0 && mappedIndex < paragraphCount) {
+                if (mappedIndex != null && mappedIndex >= 0 && mappedIndex < executionCount) {
                     return mappedIndex;
                 }
             }
         }
         return fallbackIndex;
-    }
-
-    private String buildDeterministicUnitId(Paragraph paragraph) {
-        String text = paragraph.getFullText();
-        String normalizedText = text == null ? "" : text.trim().replaceAll("\\s+", " ");
-        int textHash = normalizedText.hashCode();
-        int roundedX = Math.round(paragraph.getX());
-        int roundedY = Math.round(paragraph.getY());
-        return "p" + paragraph.getPage() + "-x" + roundedX + "-y" + roundedY + "-h" + Integer.toHexString(textHash);
     }
 
     public void shutdown() {
@@ -977,7 +963,7 @@ public class TranslationCoordinatorService {
     private record TranslationUnitPreparation(List<TranslationUnit> units, List<TranslationUnitExecution> executions) {
     }
 
-    private record TranslationUnitExecution(int index, TranslationUnit unit, Paragraph paragraphRef) {
+    private record TranslationUnitExecution(int index, TranslationUnit unit) {
     }
 
     private record RestoreCheckpointOutcome(int restoredCount, int resumeStartIndex) {

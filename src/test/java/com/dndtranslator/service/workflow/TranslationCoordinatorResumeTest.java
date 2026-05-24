@@ -47,7 +47,6 @@ class TranslationCoordinatorResumeTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> {
                     translatorCalls.incrementAndGet();
                     return "TR:" + text;
@@ -93,7 +92,6 @@ class TranslationCoordinatorResumeTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> "TR:" + text,
                 (originalPath, paragraphs, layoutInfo) -> {
                 },
@@ -143,7 +141,6 @@ class TranslationCoordinatorResumeTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> {
                     translatorCalls.incrementAndGet();
                     return "TR:" + text;
@@ -191,7 +188,6 @@ class TranslationCoordinatorResumeTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> {
                     translatorCalls.incrementAndGet();
                     return "TR:" + text;
@@ -247,7 +243,6 @@ class TranslationCoordinatorResumeTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> {
                     translatorCalls.incrementAndGet();
                     return "TR:" + text;
@@ -308,7 +303,6 @@ class TranslationCoordinatorResumeTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> {
                     translatorCalls.incrementAndGet();
                     return "TR:" + text;
