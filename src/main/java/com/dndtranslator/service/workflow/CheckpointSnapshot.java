@@ -9,8 +9,8 @@ public record CheckpointSnapshot(
         String jobKey,
         String pdfPath,
         String targetLanguage,
-        int paragraphCount,
-        int lastCompletedIndex,
+        int unitCount,
+        int lastCompletedUnitIndex,
         boolean usedOcrFallback,
         Integer currentPage,
         String currentUnitId,
@@ -34,8 +34,8 @@ public record CheckpointSnapshot(
             String jobKey,
             String pdfPath,
             String targetLanguage,
-            int paragraphCount,
-            int lastCompletedIndex,
+            int unitCount,
+            int lastCompletedUnitIndex,
             boolean usedOcrFallback,
             Map<Integer, String> translatedByIndex
     ) {
@@ -43,8 +43,8 @@ public record CheckpointSnapshot(
                 jobKey,
                 pdfPath,
                 targetLanguage,
-                paragraphCount,
-                lastCompletedIndex,
+                unitCount,
+                lastCompletedUnitIndex,
                 usedOcrFallback,
                 null,
                 null,
@@ -63,8 +63,8 @@ public record CheckpointSnapshot(
             String jobKey,
             String pdfPath,
             String targetLanguage,
-            int paragraphCount,
-            int lastCompletedIndex,
+            int unitCount,
+            int lastCompletedUnitIndex,
             boolean usedOcrFallback,
             Map<Integer, String> translatedByIndex,
             Map<Integer, String> unitIdsByIndex
@@ -73,8 +73,8 @@ public record CheckpointSnapshot(
                 jobKey,
                 pdfPath,
                 targetLanguage,
-                paragraphCount,
-                lastCompletedIndex,
+                unitCount,
+                lastCompletedUnitIndex,
                 usedOcrFallback,
                 null,
                 null,
@@ -93,8 +93,8 @@ public record CheckpointSnapshot(
             String jobKey,
             String pdfPath,
             String targetLanguage,
-            int paragraphCount,
-            int lastCompletedIndex,
+            int unitCount,
+            int lastCompletedUnitIndex,
             boolean usedOcrFallback,
             Map<Integer, String> translatedByIndex,
             Map<Integer, String> unitIdsByIndex,
@@ -104,8 +104,8 @@ public record CheckpointSnapshot(
                 jobKey,
                 pdfPath,
                 targetLanguage,
-                paragraphCount,
-                lastCompletedIndex,
+                unitCount,
+                lastCompletedUnitIndex,
                 usedOcrFallback,
                 null,
                 null,
@@ -121,10 +121,17 @@ public record CheckpointSnapshot(
     }
 
     /**
-     * Alias unit-first para compatibilidad gradual con payload/columna legacy paragraph_count.
+     * Alias legacy para compatibilidad con flujo paragraph-first previo.
      */
-    public int unitCount() {
-        return paragraphCount;
+    public int paragraphCount() {
+        return unitCount;
+    }
+
+    /**
+     * Alias legacy para compatibilidad con checkpoint antiguo basado en indice de parrafo.
+     */
+    public int lastCompletedIndex() {
+        return lastCompletedUnitIndex;
     }
 
     /**
