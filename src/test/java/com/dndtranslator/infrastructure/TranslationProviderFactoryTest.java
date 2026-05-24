@@ -50,10 +50,46 @@ public class TranslationProviderFactoryTest {
     }
 
     @Test
+    public void testCreateProviderNullUsesConfiguredDefault() {
+        String key = "dnd.translation.provider";
+        String previous = System.getProperty(key);
+        try {
+            System.setProperty(key, "mock");
+            TranslationProvider provider = TranslationProviderFactory.createProvider(null);
+            assertNotNull(provider);
+            assertEquals("mock", provider.getProviderId());
+        } finally {
+            if (previous == null) {
+                System.clearProperty(key);
+            } else {
+                System.setProperty(key, previous);
+            }
+        }
+    }
+
+    @Test
     public void testResolveProviderUsesFactoryRegistry() {
         TranslationProvider provider = TranslationProviderFactory.resolveProvider("mock");
         assertNotNull(provider);
         assertEquals("mock", provider.getProviderId());
+    }
+
+    @Test
+    public void testResolveRequestedOrDefaultUsesDefaultPolicyWhenBlank() {
+        String key = "dnd.translation.provider";
+        String previous = System.getProperty(key);
+        try {
+            System.setProperty(key, "mock");
+            TranslationProvider provider = TranslationProviderFactory.resolveRequestedOrDefault("  ");
+            assertNotNull(provider);
+            assertEquals("mock", provider.getProviderId());
+        } finally {
+            if (previous == null) {
+                System.clearProperty(key);
+            } else {
+                System.setProperty(key, previous);
+            }
+        }
     }
 }
 

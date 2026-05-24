@@ -24,7 +24,11 @@ final class TranslationCoordinatorRuntimeWiring {
     }
 
     static RuntimeDependencies defaultDependencies() {
-        TranslationProvider provider = TranslationProviderFactory.resolveProvider(null);
+        return defaultDependencies(null);
+    }
+
+    static RuntimeDependencies defaultDependencies(String requestedProviderId) {
+        TranslationProvider provider = TranslationProviderFactory.resolveRequestedOrDefault(requestedProviderId);
         TranslatorService translatorService = new TranslatorService(
                 provider,
                 new TranslationCacheRepository(),
@@ -70,7 +74,8 @@ final class TranslationCoordinatorRuntimeWiring {
                     return new TranslationCoordinatorService.ExtractionSnapshot(paragraphs, extractor.getLayoutInfo());
                 },
                 translatorService::shutdown,
-                checkpointStore == null ? CheckpointStore.noop() : checkpointStore
+                checkpointStore == null ? CheckpointStore.noop() : checkpointStore,
+                translatorService.getProviderId()
         );
     }
 
@@ -85,7 +90,8 @@ final class TranslationCoordinatorRuntimeWiring {
             TranslationCoordinatorService.EmbeddedExtractor embeddedExtractor,
             TranslationCoordinatorService.OcrExtractor ocrExtractor,
             Runnable shutdownHook,
-            CheckpointStore checkpointStore
+            CheckpointStore checkpointStore,
+            String providerId
     ) {
     }
 }

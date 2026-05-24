@@ -44,30 +44,44 @@ Si la calidad embebida es baja o no hay parrafos, se activa OCR.
 - escala coordenadas OCR a unidades PDF (`72/300`)
 - detecta columnas y arma `PageMeta` por pagina
 
-## Paso 5: traduccion paralela
+## Paso 5: preparacion de unidades
 
-`ParagraphTranslationExecutor`:
+`TranslationCoordinatorService` ejecuta una etapa explicita de preparacion:
 
-- usa un pool fijo (`workers`, por defecto nucleos disponibles)
+- convierte `Paragraph` -> `TranslationUnit` (`ParagraphToUnitConverter`)
+- enriquece metadata de unidad (`deterministic_unit_id`, `page_type`, `retry_context`)
+- calcula cursor de resume por `unitId` cuando existe checkpoint
+
+## Paso 6: traduccion unit-first (secuencial)
+
+`TranslationCoordinatorService` + `TranslatorService`:
+
+- procesa unidades pendientes en orden deterministico
 - respeta `pause/stop` desde `TranslationEventListener`
-- por cada parrafo aplica:
+- por cada unidad aplica:
   - `TextSanitizer.sanitizeForTranslation(...)`
   - `GlossaryService.applyBeforeTranslation(...)`
-  - `TranslatorGateway.translate(...)`
+  - `UnitTranslatorGateway.translate(...)` (ruta canonica)
   - `GlossaryService.applyAfterTranslation(...)`
 - notifica progreso con `TranslationProgress`
 
-## Paso 6: llamada a Ollama
+## Paso 7: llamada al provider
 
 `TranslatorService.translate(...)`:
 
-- detecta modelo (`/api/tags`): primario `gemma3:1b`, fallback `llama3.2:1b-instruct`
+- obtiene provider ya resuelto desde wiring runtime
+- detecta modelo disponible y aplica retry policy
 - segmenta texto largo en bloques de ~1000 palabras
-- traduce cada segmento via `POST /api/generate`
+- traduce cada segmento via contrato `TranslationProvider`
 - limpia ruido comun de respuesta
 - guarda resultado en cache SQLite (`translations.db`)
 
-## Paso 7: reconstruccion PDF
+`TranslatorService.translateUnit(...)`:
+
+- usa prompts unit-aware (`UnitType`, `page_type`, `retry_context`)
+- conserva compatibilidad con el flujo legacy por texto
+
+## Paso 8: reconstruccion PDF
 
 `PdfRebuilderService.rebuild(...)`:
 
@@ -77,7 +91,13 @@ Si la calidad embebida es baja o no hay parrafos, se activa OCR.
 - selecciona fuente CJK cuando existe
 - reemplaza glifos no soportados por `?`
 
-## Paso 8: resultado y cierre
+## Paso 9: checkpoint y resume
+
+- `CheckpointSnapshot` persiste cursor por unidad (`currentUnitId`, `lastCompletedUnitId`)
+- resume salta a la siguiente unidad realmente pendiente
+- mantiene campos legacy para compatibilidad (`paragraph_count`)
+
+## Paso 10: resultado y cierre
 
 - `TranslationResult` incluye:
   - `outputPdfPath`

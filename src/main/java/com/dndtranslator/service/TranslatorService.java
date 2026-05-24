@@ -44,6 +44,10 @@ public class TranslatorService {
     private final PromptBuilder promptBuilder;
     private final TranslationRetryPolicy translationRetryPolicy;
 
+    /**
+     * Constructor legado para compatibilidad. La resolución de provider debe hacerse en el wiring runtime.
+     */
+    @Deprecated(since = "1.0.0", forRemoval = false)
     public TranslatorService() {
         this(
                 TranslationProviderFactory.resolveProvider(null),
@@ -220,9 +224,200 @@ public class TranslatorService {
     // 🔹 Traducción individual con segmentación
     // ===========================================================
     public String translate(String text, String targetLanguage) {
-        if (text == null || text.isBlank()) return "";
+        return translateInternal(
+                text,
+                targetLanguage,
+                TranslationExecutionOptions.segmentedTextFlow(classifyContentType(text))
+        );
+    }
 
-        // Fast-path backward-compatible lookup before resolving model.
+    private SegmentTranslationResult translateSegment(String text, String targetLanguage, String model, String retryModel) {
+        PromptBuilder.ContentType contentType = classifyContentType(text);
+        return translateSegment(text, targetLanguage, model, retryModel, contentType);
+    }
+
+    private SegmentTranslationResult translateSegment(
+            String text,
+            String targetLanguage,
+            String model,
+            String retryModel,
+            PromptBuilder.ContentType contentType
+    ) {
+        return translateSegment(text, targetLanguage, model, retryModel, contentType, null);
+    }
+
+    private PromptBuilder.ContentType classifyContentType(String text) {
+        if (text == null || text.isBlank()) {
+            return PromptBuilder.ContentType.NARRATIVE;
+        }
+
+        String normalized = text.toLowerCase(Locale.ROOT);
+        if (looksLikeLegalText(normalized)) {
+            return PromptBuilder.ContentType.LEGAL;
+        }
+        if (looksLikeStructuredLine(normalized, text)) {
+            return PromptBuilder.ContentType.STRUCTURED;
+        }
+        if (looksLikeMapLabel(normalized)) {
+            return PromptBuilder.ContentType.MAP_LABEL;
+        }
+        return PromptBuilder.ContentType.NARRATIVE;
+    }
+
+    private boolean looksLikeLegalText(String normalized) {
+        return normalized.contains("copyright")
+                || normalized.contains("all rights reserved")
+                || normalized.contains("license")
+                || normalized.contains("terms of use")
+                || normalized.contains("disclaimer")
+                || normalized.contains("©");
+    }
+
+    private boolean looksLikeStructuredLine(String normalized, String original) {
+        if (normalized.contains("....") || normalized.matches(".*\\.{2,}\\s*\\d{1,4}\\s*$")) {
+            return true;
+        }
+        return original.matches("(?m)^\\s*[\\p{L}\\p{N} ,:;.'-]{3,}\\s+\\d{1,4}\\s*$");
+    }
+
+    private boolean looksLikeMapLabel(String normalized) {
+        return normalized.contains("map")
+                || normalized.contains("sector")
+                || normalized.contains("region")
+                || normalized.contains("north")
+                || normalized.contains("south")
+                || normalized.contains("east")
+                || normalized.contains("west")
+                || normalized.contains("hex");
+    }
+
+    private String resolveModel(List<String> availableModels) {
+        if (availableModels == null || availableModels.isEmpty()) {
+            return null;
+        }
+        return modelResolver.resolveAvailableModel(availableModels);
+    }
+
+
+    private String cleanFinalTranslation(String text) {
+        return text == null ? "" : text.trim();
+    }
+
+
+    public void shutdown() {
+        translationProvider.shutdown();
+    }
+
+    public String getProviderId() {
+        return translationProvider.getProviderId();
+    }
+
+    private TranslationCacheKey buildCacheKey(String sourceText, String targetLanguage, String modelName) {
+        return new TranslationCacheKey(
+                sourceText,
+                targetLanguage,
+                modelName,
+                TRANSLATION_STRATEGY_VERSION,
+                SANITIZER_VERSION,
+                VALIDATOR_VERSION
+        );
+    }
+
+    // ===========================================================
+    // 🔹 Traducción de unidades de dominio (Phase 10 Canonical Path)
+    // ===========================================================
+    /**
+     * Traduce una TranslationUnit y actualiza su estado.
+     * Esta es la ruta canónica de traducción a nivel de unidad (Phase 10 convergence).
+     *
+     * @param unit la unidad a traducir. Se actualizará con el texto traducido y estado.
+     * @return la misma unit pero con estado actualizado y texto traducido
+     */
+    public TranslationUnit translateUnit(TranslationUnit unit) {
+        if (unit == null || unit.getSourceText().isBlank()) {
+            if (unit != null) {
+                unit.markSkipped("Empty source text");
+            }
+            return unit;
+        }
+
+        try {
+            String translated = translateWithUnitContext(unit);
+
+            if (isVisibleErrorMarker(translated)) {
+                unit.markFailed("Translation returned error marker: " + translated);
+                logger.warn("Unit {} marked as failed due to error marker", unit.getId());
+                return unit;
+            }
+
+            // Validar el resultado traducido
+            TranslationValidationResult validation = translationValidator.validate(
+                    unit.getSourceText(),
+                    translated
+            );
+
+            if (validation.valid()) {
+                unit.markTranslated(translated);
+                logger.info("event=unit_success unitId={} unitType={} translated_length={}", unit.getId(), unit.getUnitType(), translated.length());
+            } else {
+                // Validación fallida - intentar safe output
+                String safeOutput = translationRetryPolicy.chooseSafeOutput(
+                        unit.getSourceText(),
+                        translated,
+                        translationValidator
+                );
+                unit.markTranslated(safeOutput);
+                unit.putMetadata("validation_issues", String.join("; ", validation.issues()));
+                logger.warn("event=unit_translated_with_issues unitId={} issues={}", unit.getId(), String.join(", ", validation.issues()));
+            }
+
+        } catch (Exception e) {
+            unit.markFailed("Exception during translation: " + e.getMessage());
+            logger.error("event=unit_failed unitId={} error={}", unit.getId(), e.getMessage());
+        }
+
+        return unit;
+    }
+
+    private PromptBuilder.ContentType inferContentTypeFromUnit(UnitType unitType) {
+        if (unitType == null) {
+            return PromptBuilder.ContentType.NARRATIVE;
+        }
+
+        return switch (unitType) {
+            case INDEX_LINE, TABLE_CELL, SHORT_LABEL -> PromptBuilder.ContentType.STRUCTURED;
+            case MAP_LABEL -> PromptBuilder.ContentType.MAP_LABEL;
+            case LEGAL_TEXT -> PromptBuilder.ContentType.LEGAL;
+            case PARAGRAPH, UNKNOWN -> PromptBuilder.ContentType.NARRATIVE;
+        };
+    }
+
+    private String translateWithContentType(String text, String targetLanguage, PromptBuilder.ContentType contentType) {
+        return translateInternal(
+                text,
+                targetLanguage,
+                TranslationExecutionOptions.unitFlow(contentType, null)
+        );
+    }
+
+    private String translateWithUnitContext(TranslationUnit unit) {
+        PromptBuilder.ContentType contentType = inferContentTypeFromUnit(unit.getUnitType());
+        return translateInternal(
+                unit.getSourceText(),
+                unit.getTargetLanguage(),
+                TranslationExecutionOptions.unitFlow(contentType, unit)
+        );
+    }
+
+    private String translateInternal(
+            String text,
+            String targetLanguage,
+            TranslationExecutionOptions options
+    ) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+
         TranslationCacheKey preModelKey = buildCacheKey(text, targetLanguage, UNKNOWN_MODEL);
         Optional<String> cached = cacheRepository.findTranslation(preModelKey);
         if (cached.isPresent()) {
@@ -236,11 +431,13 @@ public class TranslatorService {
             logger.warn("No se pudieron obtener modelos del provider {}: {}", translationProvider.getProviderId(), e.getMessage());
             return "[Error: Ollama no disponible]";
         }
+
         String model = resolveModel(availableModels);
         if (model == null) {
             logger.warn("Ningun modelo disponible en el provider {}.", translationProvider.getProviderId());
             return "[Error: Ollama no disponible]";
         }
+
         TranslationCacheKey cacheKey = buildCacheKey(text, targetLanguage, model);
         Optional<String> modelCached = cacheRepository.findTranslation(cacheKey);
         if (modelCached.isPresent()) {
@@ -248,7 +445,47 @@ public class TranslatorService {
         }
 
         String retryModel = modelResolver.resolveRetryModel(availableModels, model);
+        SegmentTranslationResult translatedResult = options.segmentedFlow()
+                ? translateSegmentedText(text, targetLanguage, model, retryModel)
+                : translateSegment(
+                text,
+                targetLanguage,
+                model,
+                retryModel,
+                options.contentType(),
+                options.unitContext()
+        );
 
+        String translatedFull = cleanFinalTranslation(outputSanitizer.sanitize(translatedResult.text()));
+        TranslationValidationResult finalValidation = translationValidator.validate(text, translatedFull);
+        boolean cacheable = translatedResult.cacheable();
+
+        if (!finalValidation.valid()) {
+            cacheable = false;
+            if (options.logFinalValidationIssues()) {
+                logger.warn("Validacion final de traduccion invalida: {}", String.join(", ", finalValidation.issues()));
+            }
+            translatedFull = translationRetryPolicy.chooseSafeOutput(text, translatedFull, translationValidator);
+        }
+
+        if ((!options.requireNonInterruptedToCache() || !Thread.currentThread().isInterrupted())
+                && cacheable
+                && !translatedFull.isBlank()) {
+            cacheRepository.saveTranslation(cacheKey, translatedFull, translationProvider.getProviderId());
+            if (options.logCacheStore()) {
+                logger.info("event=cache_store provider={} model={} keyVersioned={} translatedLength={}",
+                        translationProvider.getProviderId(), model, cacheKey.isVersionedMetadataPresent(), translatedFull.length());
+            }
+        }
+        return translatedFull;
+    }
+
+    private SegmentTranslationResult translateSegmentedText(
+            String text,
+            String targetLanguage,
+            String model,
+            String retryModel
+    ) {
         List<String> segments = segmenter.segment(text);
         logger.info("event=translate_start model={} targetLanguage={} segmentCount={} textLength={}",
                 model, targetLanguage, segments.size(), text.length());
@@ -268,25 +505,7 @@ public class TranslatorService {
             }
         }
 
-        String translatedFull = cleanFinalTranslation(outputSanitizer.sanitize(translatedTotal.toString()));
-        TranslationValidationResult finalValidation = translationValidator.validate(text, translatedFull);
-        if (!finalValidation.valid()) {
-            cacheable = false;
-            logger.warn("Validacion final de traduccion invalida: {}", String.join(", ", finalValidation.issues()));
-            translatedFull = translationRetryPolicy.chooseSafeOutput(text, translatedFull, translationValidator);
-        }
-
-        if (!Thread.currentThread().isInterrupted() && cacheable && !translatedFull.isBlank()) {
-            cacheRepository.saveTranslation(cacheKey, translatedFull, translationProvider.getProviderId());
-            logger.info("event=cache_store provider={} model={} keyVersioned={} translatedLength={}",
-                    translationProvider.getProviderId(), model, cacheKey.isVersionedMetadataPresent(), translatedFull.length());
-        }
-        return translatedFull;
-    }
-
-    private SegmentTranslationResult translateSegment(String text, String targetLanguage, String model, String retryModel) {
-        PromptBuilder.ContentType contentType = classifyContentType(text);
-        return translateSegment(text, targetLanguage, model, retryModel, contentType);
+        return new SegmentTranslationResult(translatedTotal.toString(), cacheable);
     }
 
     private SegmentTranslationResult translateSegment(
@@ -294,7 +513,8 @@ public class TranslatorService {
             String targetLanguage,
             String model,
             String retryModel,
-            PromptBuilder.ContentType contentType
+            PromptBuilder.ContentType contentType,
+            TranslationUnit unitContext
     ) {
         String currentModel = model;
         String bestSanitized = "";
@@ -303,9 +523,7 @@ public class TranslatorService {
         int maxAttempts = translationRetryPolicy.maxAttempts();
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                String prompt = attempt > 1
-                        ? promptBuilder.buildRetryPrompt(text, targetLanguage, contentType)
-                        : promptBuilder.buildPromptForType(text, targetLanguage, contentType);
+                String prompt = buildPromptForAttempt(text, targetLanguage, contentType, attempt, unitContext);
                 logger.info("event=segment_attempt model={} attempt={} contentType={} promptLength={}",
                         currentModel, attempt, contentType, prompt.length());
                 ProviderResponse providerResponse = translationProvider.translate(text, targetLanguage, currentModel, prompt);
@@ -384,198 +602,56 @@ public class TranslatorService {
         return new SegmentTranslationResult(text, false);
     }
 
-    private PromptBuilder.ContentType classifyContentType(String text) {
-        if (text == null || text.isBlank()) {
-            return PromptBuilder.ContentType.NARRATIVE;
+    private String buildPromptForAttempt(
+            String text,
+            String targetLanguage,
+            PromptBuilder.ContentType contentType,
+            int attempt,
+            TranslationUnit unitContext
+    ) {
+        if (unitContext == null) {
+            return attempt > 1
+                    ? promptBuilder.buildRetryPrompt(text, targetLanguage, contentType)
+                    : promptBuilder.buildPromptForType(text, targetLanguage, contentType);
         }
 
-        String normalized = text.toLowerCase(Locale.ROOT);
-        if (looksLikeLegalText(normalized)) {
-            return PromptBuilder.ContentType.LEGAL;
-        }
-        if (looksLikeStructuredLine(normalized, text)) {
-            return PromptBuilder.ContentType.STRUCTURED;
-        }
-        if (looksLikeMapLabel(normalized)) {
-            return PromptBuilder.ContentType.MAP_LABEL;
-        }
-        return PromptBuilder.ContentType.NARRATIVE;
-    }
-
-    private boolean looksLikeLegalText(String normalized) {
-        return normalized.contains("copyright")
-                || normalized.contains("all rights reserved")
-                || normalized.contains("license")
-                || normalized.contains("terms of use")
-                || normalized.contains("disclaimer")
-                || normalized.contains("©");
-    }
-
-    private boolean looksLikeStructuredLine(String normalized, String original) {
-        if (normalized.contains("....") || normalized.matches(".*\\.{2,}\\s*\\d{1,4}\\s*$")) {
-            return true;
-        }
-        return original.matches("(?m)^\\s*[\\p{L}\\p{N} ,:;.'-]{3,}\\s+\\d{1,4}\\s*$");
-    }
-
-    private boolean looksLikeMapLabel(String normalized) {
-        return normalized.contains("map")
-                || normalized.contains("sector")
-                || normalized.contains("region")
-                || normalized.contains("north")
-                || normalized.contains("south")
-                || normalized.contains("east")
-                || normalized.contains("west")
-                || normalized.contains("hex");
-    }
-
-    private String resolveModel(List<String> availableModels) {
-        if (availableModels == null || availableModels.isEmpty()) {
-            return null;
-        }
-        return modelResolver.resolveAvailableModel(availableModels);
-    }
-
-
-    private String cleanFinalTranslation(String text) {
-        return text == null ? "" : text.trim();
-    }
-
-
-    public void shutdown() {
-        translationProvider.shutdown();
-    }
-
-    private TranslationCacheKey buildCacheKey(String sourceText, String targetLanguage, String modelName) {
-        return new TranslationCacheKey(
-                sourceText,
-                targetLanguage,
-                modelName,
-                TRANSLATION_STRATEGY_VERSION,
-                SANITIZER_VERSION,
-                VALIDATOR_VERSION
-        );
-    }
-
-    // ===========================================================
-    // 🔹 Traducción de unidades de dominio (Phase 10 Canonical Path)
-    // ===========================================================
-    /**
-     * Traduce una TranslationUnit y actualiza su estado.
-     * Esta es la ruta canónica de traducción a nivel de unidad (Phase 10 convergence).
-     *
-     * @param unit la unidad a traducir. Se actualizará con el texto traducido y estado.
-     * @return la misma unit pero con estado actualizado y texto traducido
-     */
-    public TranslationUnit translateUnit(TranslationUnit unit) {
-        if (unit == null || unit.getSourceText().isBlank()) {
-            if (unit != null) {
-                unit.markSkipped("Empty source text");
-            }
-            return unit;
-        }
-
-        try {
-            PromptBuilder.ContentType contentType = inferContentTypeFromUnit(unit.getUnitType());
-            String translated = translateWithContentType(unit.getSourceText(), unit.getTargetLanguage(), contentType);
-
-            if (isVisibleErrorMarker(translated)) {
-                unit.markFailed("Translation returned error marker: " + translated);
-                logger.warn("Unit {} marked as failed due to error marker", unit.getId());
-                return unit;
-            }
-
-            // Validar el resultado traducido
-            TranslationValidationResult validation = translationValidator.validate(
-                    unit.getSourceText(),
-                    translated
-            );
-
-            if (validation.valid()) {
-                unit.markTranslated(translated);
-                logger.info("event=unit_success unitId={} unitType={} translated_length={}", unit.getId(), unit.getUnitType(), translated.length());
-            } else {
-                // Validación fallida - intentar safe output
-                String safeOutput = translationRetryPolicy.chooseSafeOutput(
-                        unit.getSourceText(),
-                        translated,
-                        translationValidator
-                );
-                unit.markTranslated(safeOutput);
-                unit.putMetadata("validation_issues", String.join("; ", validation.issues()));
-                logger.warn("event=unit_translated_with_issues unitId={} issues={}", unit.getId(), String.join(", ", validation.issues()));
-            }
-
-        } catch (Exception e) {
-            unit.markFailed("Exception during translation: " + e.getMessage());
-            logger.error("event=unit_failed unitId={} error={}", unit.getId(), e.getMessage());
-        }
-
-        return unit;
-    }
-
-    private PromptBuilder.ContentType inferContentTypeFromUnit(UnitType unitType) {
-        if (unitType == null) {
-            return PromptBuilder.ContentType.NARRATIVE;
-        }
-
-        return switch (unitType) {
-            case INDEX_LINE, TABLE_CELL, SHORT_LABEL -> PromptBuilder.ContentType.STRUCTURED;
-            case MAP_LABEL -> PromptBuilder.ContentType.MAP_LABEL;
-            case LEGAL_TEXT -> PromptBuilder.ContentType.LEGAL;
-            case PARAGRAPH, UNKNOWN -> PromptBuilder.ContentType.NARRATIVE;
-        };
-    }
-
-    private String translateWithContentType(String text, String targetLanguage, PromptBuilder.ContentType contentType) {
-        if (text == null || text.isBlank()) {
-            return "";
-        }
-
-        TranslationCacheKey preModelKey = buildCacheKey(text, targetLanguage, UNKNOWN_MODEL);
-        Optional<String> cached = cacheRepository.findTranslation(preModelKey);
-        if (cached.isPresent()) {
-            return cached.get();
-        }
-
-        List<String> availableModels;
-        try {
-            availableModels = translationProvider.fetchAvailableModels();
-        } catch (TranslationProviderException e) {
-            logger.warn("No se pudieron obtener modelos del provider {}: {}", translationProvider.getProviderId(), e.getMessage());
-            return "[Error: Ollama no disponible]";
-        }
-
-        String model = resolveModel(availableModels);
-        if (model == null) {
-            logger.warn("Ningun modelo disponible en el provider {}.", translationProvider.getProviderId());
-            return "[Error: Ollama no disponible]";
-        }
-
-        TranslationCacheKey cacheKey = buildCacheKey(text, targetLanguage, model);
-        Optional<String> modelCached = cacheRepository.findTranslation(cacheKey);
-        if (modelCached.isPresent()) {
-            return modelCached.get();
-        }
-
-        String retryModel = modelResolver.resolveRetryModel(availableModels, model);
-        SegmentTranslationResult translatedSegment = translateSegment(text, targetLanguage, model, retryModel, contentType);
-        String translatedFull = cleanFinalTranslation(outputSanitizer.sanitize(translatedSegment.text()));
-        TranslationValidationResult finalValidation = translationValidator.validate(text, translatedFull);
-        boolean cacheable = translatedSegment.cacheable();
-
-        if (!finalValidation.valid()) {
-            cacheable = false;
-            translatedFull = translationRetryPolicy.chooseSafeOutput(text, translatedFull, translationValidator);
-        }
-
-        if (cacheable && !translatedFull.isBlank()) {
-            cacheRepository.saveTranslation(cacheKey, translatedFull, translationProvider.getProviderId());
-        }
-        return translatedFull;
+        return attempt > 1
+                ? promptBuilder.buildRetryPromptForUnit(unitContext)
+                : promptBuilder.buildPromptForUnit(unitContext);
     }
 
     private record SegmentTranslationResult(String text, boolean cacheable) {
+    }
+
+    private record TranslationExecutionOptions(
+            PromptBuilder.ContentType contentType,
+            TranslationUnit unitContext,
+            boolean segmentedFlow,
+            boolean requireNonInterruptedToCache,
+            boolean logFinalValidationIssues,
+            boolean logCacheStore
+    ) {
+        private static TranslationExecutionOptions segmentedTextFlow(PromptBuilder.ContentType defaultContentType) {
+            return new TranslationExecutionOptions(
+                    defaultContentType,
+                    null,
+                    true,
+                    true,
+                    true,
+                    true
+            );
+        }
+
+        private static TranslationExecutionOptions unitFlow(PromptBuilder.ContentType contentType, TranslationUnit unitContext) {
+            return new TranslationExecutionOptions(
+                    contentType,
+                    unitContext,
+                    false,
+                    false,
+                    false,
+                    false
+            );
+        }
     }
 }
 

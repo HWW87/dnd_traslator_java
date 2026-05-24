@@ -2,6 +2,7 @@ package com.dndtranslator.service;
 
 import com.dndtranslator.model.PageMeta;
 import com.dndtranslator.model.Paragraph;
+import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -35,7 +36,7 @@ public class PdfExtractorService extends PDFTextStripper {
         paragraphs.clear();
         layoutInfo.clear();
 
-        try (PDDocument document = PDDocument.load(new java.io.File(pdfPath))) {
+        try (PDDocument document = Loader.loadPDF(new java.io.File(pdfPath))) {
             writeText(document, new java.io.StringWriter());
         }
 

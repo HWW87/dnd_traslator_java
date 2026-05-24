@@ -36,10 +36,11 @@ public class TranslationProviderFactory {
      * @throws IllegalArgumentException si el provider no es conocido
      */
     public static TranslationProvider createProvider(String providerId) {
-        return switch (providerId) {
+        String normalizedProviderId = normalizeProviderId(providerId);
+        return switch (normalizedProviderId) {
             case "ollama" -> new OllamaTranslationProvider();
             case "mock" -> new MockTranslationProvider();
-            default -> throw new IllegalArgumentException("Provider desconocido: " + providerId);
+            default -> throw new IllegalArgumentException("Provider desconocido: " + normalizedProviderId);
         };
     }
 
@@ -67,6 +68,13 @@ public class TranslationProviderFactory {
     public static TranslationProvider resolveProvider(String providerId) {
         String resolvedId = normalizeProviderId(providerId);
         return getProvider(resolvedId);
+    }
+
+    /**
+     * Política explícita de runtime: si no se solicita provider, usa el default configurado.
+     */
+    public static TranslationProvider resolveRequestedOrDefault(String requestedProviderId) {
+        return resolveProvider(requestedProviderId);
     }
 
     public static String normalizeProviderId(String providerId) {

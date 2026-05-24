@@ -23,9 +23,16 @@ El proyecto sigue una arquitectura por capas:
 1. Valida el request.
 2. Extrae parrafos y metadatos de layout (texto embebido).
 3. Decide si aplicar OCR fallback (`OcrDecisionService`).
-4. Traduce parrafos en paralelo (`ParagraphTranslationExecutor`).
-5. Reconstruye el PDF (`PdfRebuilderService`).
+4. Convierte parrafos a `TranslationUnit` y ejecuta traduccion secuencial unit-first.
+5. Persiste/restaura progreso por unidad con `CheckpointStore`.
+6. Sincroniza unidades traducidas con artefactos de rebuild y reconstruye PDF.
 6. Retorna `TranslationResult`.
+
+`TranslationCoordinatorRuntimeWiring` es el borde de composicion runtime:
+
+- Resuelve `TranslationProvider` via `TranslationProviderFactory`.
+- Construye `TranslatorService` y gateways concretos.
+- Inyecta `providerId` al orquestador para evitar resolucion de providers dentro del flujo.
 
 ## Servicios de infraestructura
 
@@ -36,7 +43,8 @@ El proyecto sigue una arquitectura por capas:
 
 ## Dominio
 
-- `Paragraph`: texto original/traducido + posicion/fuente.
+- `TranslationUnit`: unidad canonica de trabajo de traduccion en runtime.
+- `Paragraph`: artefacto de extraccion/rebuild (posicion y correlacion visual).
 - `PageMeta`: metadatos por pagina (tamano, margenes, columnas, splitX).
 - `TextBlock`: bloque de texto legacy para traduccion por bloques.
 
