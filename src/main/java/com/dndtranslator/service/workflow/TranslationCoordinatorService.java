@@ -686,7 +686,7 @@ public class TranslationCoordinatorService {
                 checkpointStore.clear(jobKey);
                 return;
             }
-            if (snapshot.paragraphCount() != executions.size()) {
+            if (snapshot.unitCount() != executions.size()) {
                 listener.onLog("♻️ Checkpoint invalido por cambio de estructura. Se ignora y reemplaza.");
                 checkpointStore.clear(jobKey);
                 return;
@@ -835,7 +835,7 @@ public class TranslationCoordinatorService {
         Map<Integer, String> translatedByIndex = new HashMap<>();
         Map<Integer, String> unitIdsByIndex = buildUnitIdsByIndex(executions);
         Map<String, String> translatedByUnitId = new HashMap<>();
-        int lastCompletedIndex = -1;
+        int lastCompletedUnitIndex = -1;
         String currentUnitId = null;
         String lastCompletedUnitId = null;
         Integer currentPage = null;
@@ -861,7 +861,7 @@ public class TranslationCoordinatorService {
             if (translated != null && !translated.isBlank()) {
                 translatedByIndex.put(i, translated);
                 completedUnitCount++;
-                lastCompletedIndex = i;
+                lastCompletedUnitIndex = i;
             }
             if (unitId != null && !unitId.isBlank()) {
                 if (translated != null && !translated.isBlank()) {
@@ -880,7 +880,7 @@ public class TranslationCoordinatorService {
                 pdfFile.getAbsolutePath(),
                 targetLanguage,
                 executions.size(),
-                lastCompletedIndex,
+                lastCompletedUnitIndex,
                 usedOcrFallback,
                 currentPage,
                 currentUnitId,

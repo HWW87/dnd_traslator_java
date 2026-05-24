@@ -57,7 +57,9 @@ public class SqliteCheckpointStore implements CheckpointStore {
         try (Connection conn = openConnection();
              //noinspection SqlNoDataSourceInspection
              PreparedStatement ps = conn.prepareStatement("""
-                     SELECT pdf_path, target_language, paragraph_count, last_completed_index,
+                     SELECT pdf_path, target_language,
+                            unit_count, last_completed_unit_index,
+                            paragraph_count, last_completed_index,
                             used_ocr_fallback, translated_payload
                      FROM translation_checkpoints
                      WHERE job_key = ?
@@ -70,8 +72,16 @@ public class SqliteCheckpointStore implements CheckpointStore {
 
             String pdfPath = rs.getString("pdf_path");
             String targetLanguage = rs.getString("target_language");
+            int unitCount = rs.getInt("unit_count");
+            int lastCompletedUnitIndex = rs.getInt("last_completed_unit_index");
             int paragraphCount = rs.getInt("paragraph_count");
             int lastCompletedIndex = rs.getInt("last_completed_index");
+            if (unitCount <= 0) {
+                unitCount = Math.max(0, paragraphCount);
+            }
+            if (lastCompletedUnitIndex < 0 && lastCompletedIndex >= 0) {
+                lastCompletedUnitIndex = lastCompletedIndex;
+            }
             boolean usedOcrFallback = rs.getInt("used_ocr_fallback") == 1;
             String payload = rs.getString("translated_payload");
             TranslationPayload translationPayload = deserializeTranslations(payload);
@@ -80,8 +90,8 @@ public class SqliteCheckpointStore implements CheckpointStore {
                     jobKey,
                     pdfPath,
                     targetLanguage,
-                    paragraphCount,
-                    lastCompletedIndex,
+                    unitCount,
+                    lastCompletedUnitIndex,
                     usedOcrFallback,
                     translationPayload.currentPage(),
                     translationPayload.currentUnitId(),
@@ -113,18 +123,23 @@ public class SqliteCheckpointStore implements CheckpointStore {
                      //noinspection SqlNoDataSourceInspection
                      PreparedStatement ps = conn.prepareStatement("""
                              INSERT OR REPLACE INTO translation_checkpoints(
-                                 job_key, pdf_path, target_language, paragraph_count,
-                                 last_completed_index, used_ocr_fallback, translated_payload, updated_at
-                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                 job_key, pdf_path, target_language,
+                                 unit_count, last_completed_unit_index,
+                                 paragraph_count, last_completed_index,
+                                 used_ocr_fallback, translated_payload, updated_at
+                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                              """)) {
                     ps.setString(1, snapshot.jobKey());
                     ps.setString(2, snapshot.pdfPath());
                     ps.setString(3, snapshot.targetLanguage());
-                    ps.setInt(4, snapshot.paragraphCount());
-                    ps.setInt(5, snapshot.lastCompletedIndex());
-                    ps.setInt(6, snapshot.usedOcrFallback() ? 1 : 0);
-                    ps.setString(7, serializeTranslations(snapshot));
-                    ps.setString(8, LocalDateTime.now().toString());
+                    ps.setInt(4, snapshot.unitCount());
+                    ps.setInt(5, snapshot.lastCompletedUnitIndex());
+                    // Compatibilidad: persistimos tambien campos legacy para snapshots/DB antiguos.
+                    ps.setInt(6, snapshot.unitCount());
+                    ps.setInt(7, snapshot.lastCompletedUnitIndex());
+                    ps.setInt(8, snapshot.usedOcrFallback() ? 1 : 0);
+                    ps.setString(9, serializeTranslations(snapshot));
+                    ps.setString(10, LocalDateTime.now().toString());
                     ps.executeUpdate();
                     return;
                 } catch (SQLException e) {
@@ -171,6 +186,8 @@ public class SqliteCheckpointStore implements CheckpointStore {
                         job_key TEXT PRIMARY KEY,
                         pdf_path TEXT NOT NULL,
                         target_language TEXT NOT NULL,
+                        unit_count INTEGER NOT NULL DEFAULT 0,
+                        last_completed_unit_index INTEGER NOT NULL DEFAULT -1,
                         paragraph_count INTEGER NOT NULL,
                         last_completed_index INTEGER NOT NULL,
                         used_ocr_fallback INTEGER NOT NULL,
@@ -178,8 +195,19 @@ public class SqliteCheckpointStore implements CheckpointStore {
                         updated_at TEXT NOT NULL
                     )
                     """);
+            ensureColumnExists(stmt, "unit_count", "INTEGER NOT NULL DEFAULT 0");
+            ensureColumnExists(stmt, "last_completed_unit_index", "INTEGER NOT NULL DEFAULT -1");
         } catch (SQLException e) {
             logger.error("Error creando tabla translation_checkpoints: {}", e.getMessage());
+        }
+    }
+
+    private void ensureColumnExists(Statement stmt, String columnName, String columnDefinition) {
+        try {
+            //noinspection SqlNoDataSourceInspection
+            stmt.execute("ALTER TABLE translation_checkpoints ADD COLUMN " + columnName + " " + columnDefinition);
+        } catch (SQLException ignored) {
+            // Columna ya existe en esquemas previamente migrados.
         }
     }
 
