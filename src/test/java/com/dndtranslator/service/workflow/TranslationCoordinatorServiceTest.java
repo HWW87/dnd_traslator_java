@@ -88,7 +88,6 @@ class TranslationCoordinatorServiceTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 glossary,
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> {
                     translatorCalls.incrementAndGet();
                     return "ES:" + text;
@@ -130,7 +129,6 @@ class TranslationCoordinatorServiceTest {
                 (paragraphs, layout) -> true,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> "TR:" + text,
                 rebuilder,
                 path -> new TranslationCoordinatorService.ExtractionSnapshot(embeddedParagraphs, onePageLayout()),
@@ -160,7 +158,6 @@ class TranslationCoordinatorServiceTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> "TR:" + text,
                 new CapturingRebuilder(),
                 path -> new TranslationCoordinatorService.ExtractionSnapshot(embeddedParagraphs, onePageLayout()),
@@ -182,7 +179,6 @@ class TranslationCoordinatorServiceTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> {
                     throw new IllegalStateException("translator unavailable");
                 },
@@ -211,7 +207,6 @@ class TranslationCoordinatorServiceTest {
                 (paragraphs, layout) -> false,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 (text, lang) -> {
                     throw new IllegalStateException("text gateway should not be used");
                 },
@@ -253,7 +248,6 @@ class TranslationCoordinatorServiceTest {
                 (paragraphs, layout) -> forceOcr,
                 new TextSanitizer(),
                 glossary,
-                new ParagraphTranslationExecutor(1),
                 translator,
                 rebuilder,
                 path -> new TranslationCoordinatorService.ExtractionSnapshot(embedded, onePageLayout()),

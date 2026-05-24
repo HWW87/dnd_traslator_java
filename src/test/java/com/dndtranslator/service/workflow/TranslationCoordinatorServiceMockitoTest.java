@@ -65,7 +65,6 @@ class TranslationCoordinatorServiceMockitoTest {
                         new GlossaryEntry("Armor Class", "Clase de Armadura", false),
                         new GlossaryEntry("Hit Points", "Puntos de Golpe", false)
                 )),
-                new ParagraphTranslationExecutor(1),
                 translatorGateway,
                 pdfRebuilderGateway,
                 embeddedExtractor,
@@ -111,7 +110,6 @@ class TranslationCoordinatorServiceMockitoTest {
                 (paragraphs, layoutInfo) -> true,
                 new TextSanitizer(),
                 new GlossaryService(List.of()),
-                new ParagraphTranslationExecutor(1),
                 translatorGateway,
                 pdfRebuilderGateway,
                 embeddedExtractor,
