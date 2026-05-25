@@ -52,7 +52,25 @@ public class TranslationValidator {
             "assistant response:",
             "respuesta del asistente:",
             "output:",
-            "result:"
+            "result:",
+            "preserve names and terminology",
+            "contexto:",
+            "structured content",
+            "no translation available",
+            "output only the translated text",
+            "maintain line breaks",
+            "do not include explanations"
+    );
+
+    private static final List<String> PROMPT_LEAKAGE_MARKERS = List.of(
+            "preserve names and terminology",
+            "contexto:",
+            "structured content",
+            "no translation available",
+            "output only the translated text",
+            "maintain line breaks",
+            "do not include explanations",
+            "rules:"
     );
 
     private static final List<String> ASSISTANT_LEAKAGE_MARKERS = List.of(
@@ -106,6 +124,13 @@ public class TranslationValidator {
             blocking = true;
             shouldRetry = true;
             confidence -= 0.45d;
+        }
+
+        if (containsPromptLeakageEcho(translatedText)) {
+            issues.add("BLOCKING: prompt leakage/instruction echo detected");
+            blocking = true;
+            shouldRetry = true;
+            confidence -= 0.35d;
         }
 
         if (containsAssistantLeakage(translatedText)) {
@@ -225,6 +250,21 @@ public class TranslationValidator {
         String comparable = normalizeComparable(text);
         for (String marker : ASSISTANT_LEAKAGE_MARKERS) {
             if (comparable.contains(normalizeComparable(marker))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean containsPromptLeakageEcho(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+
+        String comparable = normalizeComparable(text);
+        for (String marker : PROMPT_LEAKAGE_MARKERS) {
+            String normalizedMarker = normalizeComparable(marker);
+            if (comparable.contains(normalizedMarker)) {
                 return true;
             }
         }

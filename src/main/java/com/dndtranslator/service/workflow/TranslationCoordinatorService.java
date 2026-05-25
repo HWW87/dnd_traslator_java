@@ -332,6 +332,7 @@ public class TranslationCoordinatorService {
                 }
 
                 listener.onLog("⏹️ Detencion solicitada. Exportando avance parcial...");
+                logPageUnitDiagnostics(executions);
                 saveCheckpoint(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), executions);
                 safeTransition(job, JobState.REBUILDING);
                 syncTranslatedTextToParagraphs(paragraphs, executions);
@@ -352,6 +353,7 @@ public class TranslationCoordinatorService {
             }
 
             checkStopRequested(listener);
+            logPageUnitDiagnostics(executions);
             saveCheckpoint(jobKey, pdfFile, targetLanguage, extraction.usedOcrFallback(), executions);
             safeTransition(job, JobState.REBUILDING);
             listener.onLog("🧾 Reconstruyendo PDF con layout original...");
@@ -525,20 +527,109 @@ public class TranslationCoordinatorService {
         if (paragraphs == null || executions == null) {
             return;
         }
+        Map<Integer, Integer> mappedByPage = new HashMap<>();
+        Map<Integer, Integer> suppressedByPage = new HashMap<>();
+        Map<Integer, Integer> unresolvedByPage = new HashMap<>();
         for (TranslationUnitExecution execution : executions) {
             if (execution == null || execution.unit() == null) {
                 continue;
             }
+            TranslationUnit unit = execution.unit();
+            int page = Math.max(1, unit.getPageNumber());
             String translated = execution.unit().getTranslatedText();
-            if (translated == null) {
+            if (translated == null || translated.isBlank()) {
+                suppressedByPage.merge(page, 1, Integer::sum);
                 continue;
             }
             Integer sourceIndex = execution.unit().getMetadata("source_index", Integer.class);
             if (sourceIndex == null || sourceIndex < 0 || sourceIndex >= paragraphs.size()) {
+                unresolvedByPage.merge(page, 1, Integer::sum);
                 continue;
             }
             paragraphs.get(sourceIndex).setTranslatedText(translated);
+            mappedByPage.merge(page, 1, Integer::sum);
         }
+
+        for (Integer page : collectDiagnosticPages(mappedByPage, suppressedByPage, unresolvedByPage)) {
+            logger.info(
+                    "event=unit_to_paragraph_mapping page={} mapped={} suppressed={} unresolved_index={}",
+                    page,
+                    mappedByPage.getOrDefault(page, 0),
+                    suppressedByPage.getOrDefault(page, 0),
+                    unresolvedByPage.getOrDefault(page, 0)
+            );
+        }
+    }
+
+    private void logPageUnitDiagnostics(List<TranslationUnitExecution> executions) {
+        if (executions == null || executions.isEmpty()) {
+            return;
+        }
+
+        Map<Integer, Integer> unitCountByPage = new HashMap<>();
+        Map<Integer, Integer> translatedByPage = new HashMap<>();
+        Map<Integer, Integer> failedByPage = new HashMap<>();
+        Map<Integer, Integer> retriedByPage = new HashMap<>();
+        Map<Integer, Integer> skippedByPage = new HashMap<>();
+
+        for (TranslationUnitExecution execution : executions) {
+            if (execution == null || execution.unit() == null) {
+                continue;
+            }
+            TranslationUnit unit = execution.unit();
+            int page = Math.max(1, unit.getPageNumber());
+            unitCountByPage.merge(page, 1, Integer::sum);
+
+            if (unit.getTranslatedText() != null && !unit.getTranslatedText().isBlank()) {
+                translatedByPage.merge(page, 1, Integer::sum);
+            }
+            if (unit.getState() == UnitState.FAILED) {
+                failedByPage.merge(page, 1, Integer::sum);
+            }
+            if (unit.getRetryCount() > 0) {
+                retriedByPage.merge(page, 1, Integer::sum);
+            }
+            if (unit.isSkipped()) {
+                skippedByPage.merge(page, 1, Integer::sum);
+            }
+        }
+
+        for (Integer page : unitCountByPage.keySet()) {
+            int total = unitCountByPage.getOrDefault(page, 0);
+            int translated = translatedByPage.getOrDefault(page, 0);
+            int failed = failedByPage.getOrDefault(page, 0);
+            int retried = retriedByPage.getOrDefault(page, 0);
+            int skipped = skippedByPage.getOrDefault(page, 0);
+            int suppressed = Math.max(0, total - translated - failed - skipped);
+            logger.info(
+                    "event=page_translation_diagnostics page={} units={} translated={} failed={} retried={} skipped={} suppressed={}",
+                    page,
+                    total,
+                    translated,
+                    failed,
+                    retried,
+                    skipped,
+                    suppressed
+            );
+        }
+    }
+
+    private List<Integer> collectDiagnosticPages(
+            Map<Integer, Integer> mappedByPage,
+            Map<Integer, Integer> suppressedByPage,
+            Map<Integer, Integer> unresolvedByPage
+    ) {
+        Map<Integer, Boolean> pages = new HashMap<>();
+        for (Integer page : mappedByPage.keySet()) {
+            pages.put(page, Boolean.TRUE);
+        }
+        for (Integer page : suppressedByPage.keySet()) {
+            pages.put(page, Boolean.TRUE);
+        }
+        for (Integer page : unresolvedByPage.keySet()) {
+            pages.put(page, Boolean.TRUE);
+        }
+        return new ArrayList<>(pages.keySet());
     }
 
     private void waitWhilePaused(TranslationEventListener listener) throws InterruptedException {

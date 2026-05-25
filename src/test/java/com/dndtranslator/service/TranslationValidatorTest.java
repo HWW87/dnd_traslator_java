@@ -120,5 +120,23 @@ class TranslationValidatorTest {
         assertTrue(result.shouldRetry());
         assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("expanded excessively")));
     }
+
+    @Test
+    void blocksPromptLeakageInstructionEcho() {
+        TranslationValidationResult result = validator.validate(
+                "Table of contents",
+                "Rules: Preserve names and terminology. Output only the translated text."
+        );
+
+        assertFalse(result.valid());
+        assertTrue(result.shouldRetry());
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.contains("prompt leakage")));
+    }
+
+    @Test
+    void detectsPromptLeakageEchoHelper() {
+        assertTrue(validator.containsPromptLeakageEcho("Contexto: structured content"));
+        assertFalse(validator.containsPromptLeakageEcho("Puntos de golpe 20"));
+    }
 }
 

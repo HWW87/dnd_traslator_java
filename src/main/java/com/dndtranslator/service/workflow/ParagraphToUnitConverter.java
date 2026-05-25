@@ -35,7 +35,7 @@ public class ParagraphToUnitConverter {
     }
 
     private TranslationUnit toUnit(Paragraph paragraph, String targetLanguage, int sourceIndex) {
-        String sourceText = paragraph.getFullText() == null ? "" : paragraph.getFullText();
+        String sourceText = normalizeSourceText(paragraph.getFullText());
         TranslationUnit unit = new TranslationUnit(
                 paragraph.getPage(),
                 sourceText,
@@ -49,10 +49,26 @@ public class ParagraphToUnitConverter {
         unit.putMetadata("paragraph_font", paragraph.getFontName());
         unit.putMetadata("paragraph_font_size", paragraph.getFontSize());
         unit.putMetadata("deterministic_unit_id", buildDeterministicUnitId(paragraph));
+        unit.putMetadata("source_text_length", sourceText.length());
         if (sourceIndex >= 0) {
             unit.putMetadata("source_index", sourceIndex);
         }
         return unit;
+    }
+
+    private String normalizeSourceText(String rawText) {
+        if (rawText == null || rawText.isBlank()) {
+            return "";
+        }
+        String normalized = rawText
+                .replace('\r', '\n')
+                .replaceAll("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]", " ")
+                .replaceAll("[\\uFFFD]", " ")
+                .replaceAll("[ \\t]+", " ")
+                .replaceAll(" *\\n *", "\n")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
+        return normalized;
     }
 
     private String buildDeterministicUnitId(Paragraph paragraph) {

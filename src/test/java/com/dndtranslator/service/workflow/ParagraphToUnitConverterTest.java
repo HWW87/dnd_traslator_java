@@ -48,5 +48,14 @@ class ParagraphToUnitConverterTest {
         assertEquals("BookFont", unit.getMetadata("paragraph_font", String.class));
         assertEquals(9.0f, unit.getMetadata("paragraph_font_size", Float.class));
     }
+
+    @Test
+    void normalizesNoisySourceTextBeforeCreatingUnit() {
+        Paragraph paragraph = new Paragraph("Linea\u0007  1\r\n\r\n\r\nLinea\uFFFD 2", 1, 10, 20, "Font", 10);
+
+        TranslationUnit unit = converter.toUnit(paragraph, "Spanish");
+
+        assertEquals("Linea 1\n\nLinea 2", unit.getSourceText());
+    }
 }
 
