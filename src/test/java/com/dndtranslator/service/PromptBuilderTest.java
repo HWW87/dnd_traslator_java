@@ -15,8 +15,10 @@ class PromptBuilderTest {
     void buildsTranslationPromptWithExpectedRules() {
         String prompt = promptBuilder.buildTranslationPrompt("Armor Class 15", "Spanish");
 
-        assertTrue(prompt.contains("Translate the following text *directly* to Spanish."));
+        assertTrue(prompt.contains("Translate ONLY the SOURCE_TEXT block to Spanish."));
         assertTrue(prompt.contains("- Output ONLY the translated text."));
+        assertTrue(prompt.contains("SOURCE_TEXT_START"));
+        assertTrue(prompt.contains("SOURCE_TEXT_END"));
         assertTrue(prompt.contains("Armor Class 15"));
         assertFalse(prompt.contains("DO NOT add markdown fences"));
     }
@@ -25,7 +27,7 @@ class PromptBuilderTest {
     void buildsRetryPromptWithExtraSafetyRule() {
         String prompt = promptBuilder.buildRetryPrompt("Armor Class 15", "Spanish");
 
-        assertTrue(prompt.contains("Translate the following text *directly* to Spanish."));
+        assertTrue(prompt.contains("Translate ONLY the SOURCE_TEXT block to Spanish."));
         assertTrue(prompt.contains("DO NOT add markdown fences, apologies, or assistant-style prefacing."));
         assertTrue(prompt.contains("Armor Class 15"));
     }
@@ -34,6 +36,7 @@ class PromptBuilderTest {
     void buildsStructuredPromptWithIndexRules() {
         String prompt = promptBuilder.buildStructuredPrompt("Chapter One .... 12", "Spanish");
 
+        assertTrue(prompt.contains("Translate line by line"));
         assertTrue(prompt.contains("Preserve numbering and leader dots when present."));
         assertTrue(prompt.contains("Keep table/index style layout semantics."));
     }

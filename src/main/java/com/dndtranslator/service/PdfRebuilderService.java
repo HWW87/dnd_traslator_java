@@ -132,6 +132,17 @@ public class PdfRebuilderService {
                             pageImages.size()
                     );
 
+                    int translatedParagraphCount = 0;
+                    int suppressedParagraphCount = 0;
+                    for (Paragraph paragraph : pageParagraphs) {
+                        String translated = paragraph == null ? null : paragraph.getTranslatedText();
+                        if (translated == null || translated.isBlank()) {
+                            suppressedParagraphCount++;
+                        } else {
+                            translatedParagraphCount++;
+                        }
+                    }
+
                     drawImages(doc, cs, page.getMediaBox(), pageImages);
                     List<String> carryOver = overflowByPage.getOrDefault(pageNumber, List.of());
                     List<String> overflow = pageTextRenderer.writeParagraphs(
@@ -141,6 +152,14 @@ public class PdfRebuilderService {
                             pageParagraphs,
                             pageLayout,
                             carryOver
+                    );
+                    logger.info(
+                            "event=render_page_diagnostics page={} pageType={} translatedParagraphCandidates={} suppressedParagraphs={} renderedOverflowBlocks={}",
+                            pageNumber,
+                            pageType,
+                            translatedParagraphCount,
+                            suppressedParagraphCount,
+                            overflow.size()
                     );
                     if (!overflow.isEmpty()) {
                         int nextPage = pageNumber + 1;

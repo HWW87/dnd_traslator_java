@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TranslationOutputSanitizerTest {
 
@@ -91,6 +92,19 @@ class TranslationOutputSanitizerTest {
         String sanitized = sanitizer.sanitize("Assistant response:\nResultado:\nPuntos de golpe 20");
 
         assertEquals("Puntos de golpe 20", sanitized);
+    }
+
+    @Test
+    void removesPromptLeakageInstructionLines() {
+        String sanitized = sanitizer.sanitize("Preserve names and terminology\nContexto: Esta es contenido structured content\nClase de Armadura 18");
+
+        assertEquals("Clase de Armadura 18", sanitized);
+    }
+
+    @Test
+    void detectsPromptLeakageMarkers() {
+        assertTrue(sanitizer.containsPromptLeakage("No translation available. Output only the translated text."));
+        assertFalse(sanitizer.containsPromptLeakage("Clase de Armadura 18"));
     }
 }
 

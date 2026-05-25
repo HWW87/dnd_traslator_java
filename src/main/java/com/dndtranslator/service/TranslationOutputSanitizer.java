@@ -32,7 +32,23 @@ public class TranslationOutputSanitizer {
             "no text was provided",
             "spanish translation",
             "output:",
-            "answer:"
+            "answer:",
+            "preserve names and terminology",
+            "contexto:",
+            "structured content",
+            "no translation available",
+            "output only the translated text"
+    );
+
+    private static final List<String> PROMPT_LEAKAGE_LINE_MARKERS = List.of(
+            "preserve names and terminology",
+            "contexto:",
+            "structured content",
+            "no translation available",
+            "output only the translated text",
+            "maintain line breaks",
+            "do not include explanations",
+            "rules:"
     );
 
     private static final List<String> ASSISTANT_PREFACES = List.of(
@@ -107,6 +123,10 @@ public class TranslationOutputSanitizer {
                 }
             }
 
+            if (!dropLine && containsPromptLeakageLine(normalizedLine)) {
+                dropLine = true;
+            }
+
             if (!dropLine) {
                 keptLines.add(trimmed);
             }
@@ -117,6 +137,22 @@ public class TranslationOutputSanitizer {
             result = stripLeadingPhraseLoosely(result, phrase);
         }
         return result;
+    }
+
+    public boolean containsPromptLeakage(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String normalized = normalizeComparable(text);
+        if (containsPromptLeakageLine(normalized)) {
+            return true;
+        }
+        for (String phrase : FORBIDDEN_PHRASES) {
+            if (normalized.contains(normalizeComparable(phrase))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public String stripMarkdownFences(String text) {
@@ -287,6 +323,18 @@ public class TranslationOutputSanitizer {
         return normalizedLine.equals(normalizedPhrase)
                 || normalizedLine.startsWith(normalizedPhrase + ":")
                 || normalizedLine.startsWith(normalizedPhrase + " -");
+    }
+
+    private boolean containsPromptLeakageLine(String normalizedLine) {
+        for (String marker : PROMPT_LEAKAGE_LINE_MARKERS) {
+            String normalizedMarker = normalizeComparable(marker);
+            if (normalizedLine.startsWith(normalizedMarker)
+                    || normalizedLine.contains(normalizedMarker + ":")
+                    || normalizedLine.contains("- " + normalizedMarker)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<String> tokenizeComparableWords(String value) {

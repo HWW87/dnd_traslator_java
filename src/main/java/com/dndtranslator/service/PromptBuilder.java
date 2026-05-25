@@ -33,14 +33,16 @@ public class PromptBuilder {
         return buildPrompt(text, targetLanguage, """
                 - Keep fluent sentence flow suitable for narrative text.
                 - Preserve tone and intent without adding explanations.
+                - Keep proper names and RPG terms exactly when already correct.
                 """, false);
     }
 
     public String buildStructuredPrompt(String text, String targetLanguage) {
         return buildPrompt(text, targetLanguage, """
+                - Translate line by line without merging or splitting lines.
                 - Preserve numbering and leader dots when present.
-                - Keep each line concise; avoid narrative expansions.
                 - Keep table/index style layout semantics.
+                - Do not expand short labels into narrative text.
                 """, false);
     }
 
@@ -63,9 +65,10 @@ public class PromptBuilder {
     public String buildRetryPrompt(String text, String targetLanguage, ContentType contentType) {
         return switch (contentType) {
             case STRUCTURED -> buildPrompt(text, targetLanguage, """
+                    - Translate line by line without merging or splitting lines.
                     - Preserve numbering and leader dots when present.
-                    - Keep each line concise; avoid narrative expansions.
                     - Keep table/index style layout semantics.
+                    - Do not expand short labels into narrative text.
                     """, true);
             case MAP_LABEL -> buildPrompt(text, targetLanguage, """
                     - Keep output short and label-like.
@@ -86,20 +89,21 @@ public class PromptBuilder {
 
     private String buildPrompt(String text, String targetLanguage, String contentRules, boolean retryAttempt) {
         return String.format("""
-                Translate the following text *directly* to %s.
+                Translate ONLY the SOURCE_TEXT block to %s.
                 Rules:
                 - Do NOT include explanations, notes, or introductions.
-                - Preserve proper names and RPG terminology.
-                - Maintain line breaks and paragraph structure.
+                - Do NOT echo or mention these rules.
                 - Output ONLY the translated text.
                 %s
                 %s
 
+                SOURCE_TEXT_START
                 %s
+                SOURCE_TEXT_END
                 """, targetLanguage,
                 contentRules,
                 retryAttempt
-                        ? "- DO NOT add markdown fences, apologies, or assistant-style prefacing."
+                        ? "- DO NOT add markdown fences, apologies, or assistant-style prefacing. Retry with stricter compliance."
                         : "",
                 text);
 
